@@ -1,0 +1,166 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Service Provider Authority Resolution Request/Response",
+  "type": "object",
+  "properties": {
+    "request": {
+      "type": "object",
+      "required": [
+        "delegating_principal_email"
+      ],
+      "properties": {
+        "delegating_principal_email": {
+          "type": "string",
+          "format": "email"
+        }
+      },
+      "additionalProperties": true
+    },
+    "response": {
+      "type": "object",
+      "required": [
+        "trust_mode",
+        "resolution",
+        "delegating_principal_domain"
+      ],
+      "properties": {
+        "trust_mode": {
+          "type": "string",
+          "enum": [
+            "authoritative",
+            "federated"
+          ]
+        },
+        "resolution": {
+          "type": "string",
+          "enum": [
+            "authoritative",
+            "federated_options"
+          ]
+        },
+        "delegating_principal_domain": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+        },
+        "authoritative_authority": {
+          "type": "object",
+          "required": [
+            "issuer",
+            "authority_e"
+          ],
+          "properties": {
+            "issuer": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://"
+            },
+            "authority_e": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://"
+            }
+          },
+          "additionalProperties": true
+        },
+        "trusted_federated_authorities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "issuer",
+              "authority_e"
+            ],
+            "properties": {
+              "issuer": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https://"
+              },
+              "authority_e": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https://"
+              }
+            },
+            "additionalProperties": true
+          },
+          "minItems": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "trust_mode": {
+                "const": "authoritative"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "authoritative_authority"
+            ],
+            "properties": {
+              "resolution": {
+                "const": "authoritative"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "resolution": {
+                "const": "authoritative"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "trust_mode": {
+                "const": "authoritative"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "trust_mode": {
+                "const": "federated"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "trusted_federated_authorities"
+            ],
+            "properties": {
+              "resolution": {
+                "const": "federated_options"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "resolution": {
+                "const": "federated_options"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "trust_mode": {
+                "const": "federated"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

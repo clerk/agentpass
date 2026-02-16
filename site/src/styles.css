@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-shell text-slate-900 antialiased;
+  }
+
+  a {
+    @apply text-slate-700 hover:text-slate-900;
+  }
+}
+
+@layer components {
+  .markdown-content {
+    @apply text-[15px] leading-7 text-slate-800;
+  }
+
+  .markdown-content h1 {
+    @apply mt-8 mb-4 text-3xl font-semibold tracking-tight text-slate-900;
+  }
+
+  .markdown-content h2 {
+    @apply mt-8 mb-3 border-b border-slate-200 pb-2 text-2xl font-semibold text-slate-900;
+  }
+
+  .markdown-content h3 {
+    @apply mt-6 mb-2 text-xl font-semibold text-slate-900;
+  }
+
+  .markdown-content h4 {
+    @apply mt-5 mb-2 text-base font-semibold text-slate-900;
+  }
+
+  .markdown-content p {
+    @apply my-3;
+  }
+
+  .markdown-content ul {
+    @apply my-3 list-disc space-y-1 pl-6;
+  }
+
+  .markdown-content ol {
+    @apply my-3 list-decimal space-y-1 pl-6;
+  }
+
+  .markdown-content li > p {
+    @apply my-1;
+  }
+
+  .markdown-content blockquote {
+    @apply my-4 border-l-4 border-slate-300 bg-slate-50 px-4 py-2 text-slate-700;
+  }
+
+  .markdown-content code {
+    @apply rounded bg-slate-100 px-1.5 py-0.5 text-[0.9em] text-slate-900;
+  }
+
+  .markdown-content pre {
+    @apply my-4 overflow-x-auto rounded-md border border-slate-200 bg-slate-900 p-4 text-sm;
+  }
+
+  .markdown-content pre code {
+    @apply bg-transparent p-0 text-slate-100;
+  }
+
+  .markdown-content hr {
+    @apply my-8 border-slate-200;
+  }
+
+  .markdown-content table {
+    @apply my-4 w-full border-collapse text-sm;
+  }
+
+  .markdown-content th {
+    @apply border border-slate-300 bg-slate-50 px-3 py-2 text-left font-semibold text-slate-900;
+  }
+
+  .markdown-content td {
+    @apply border border-slate-200 px-3 py-2 align-top;
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "request": {
+    "delegating_principal_email": "alex@example.com"
+  },
+  "response": {
+    "trust_mode": "authoritative",
+    "resolution": "authoritative",
+    "delegating_principal_domain": "example.com",
+    "authoritative_authority": {
+      "issuer": "https://agentpass.example.com",
+      "authority_e": "https://agentpass.example.com/ap"
+    }
+  }
+}

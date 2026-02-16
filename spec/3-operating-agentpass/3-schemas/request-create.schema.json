@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentPass Request Create",
+  "type": "object",
+  "required": [
+    "agent_principal",
+    "delegating_principal",
+    "delegating_principal_domain",
+    "service",
+    "type"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "service_signin_bootstrap",
+        "service_bearer_token"
+      ]
+    },
+    "service": {
+      "type": "object",
+      "required": [
+        "origin"
+      ],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        }
+      },
+      "additionalProperties": true
+    },
+    "delegating_principal": {
+      "type": "object",
+      "required": [
+        "sub"
+      ],
+      "properties": {
+        "sub": {
+          "type": "string",
+          "minLength": 1
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        }
+      },
+      "additionalProperties": true
+    },
+    "agent_principal": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cnf": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "intent": {
+      "type": "object",
+      "properties": {
+        "destination_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        }
+      },
+      "additionalProperties": true
+    },
+    "delegating_principal_domain": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
+      "description": "DNS domain associated with the delegating principal; used by Service Providers for authoritative precedence enforcement."
+    }
+  },
+  "additionalProperties": true
+}

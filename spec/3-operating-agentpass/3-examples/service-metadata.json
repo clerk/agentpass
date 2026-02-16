@@ -1,0 +1,24 @@
+{
+  "kind": "service",
+  "service": {
+    "origin": "https://service.example.com",
+    "name": "Example Service Provider"
+  },
+  "trust": {
+    "accepted_authorities": [
+      "https://agentpass.example.com"
+    ],
+    "accepted_federated_authorities": [
+      "https://codex.example.com"
+    ]
+  },
+  "endpoints": {
+    "resolve_authority": "https://service.example.com/ap/resolve-authority",
+    "init": "https://service.example.com/ap/init",
+    "initialize": "https://service.example.com/ap/initialize/{token}"
+  },
+  "session": {
+    "supports_agent_session": true,
+    "requires_disclosure_banner": true
+  }
+}

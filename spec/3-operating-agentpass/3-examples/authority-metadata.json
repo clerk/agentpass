@@ -1,0 +1,22 @@
+{
+  "kind": "authority",
+  "issuer": "https://agentpass.example.com",
+  "endpoints": {
+    "requests": "https://agentpass.example.com/ap/requests",
+    "request_status": "https://agentpass.example.com/ap/requests/{id}",
+    "events": "https://agentpass.example.com/ap/requests/{id}/events"
+  },
+  "crypto": {
+    "jwks_uri": "https://agentpass.example.com/ap/jwks",
+    "alg": [
+      "ES256"
+    ]
+  },
+  "approval": {
+    "modes": [
+      "poll",
+      "sse"
+    ],
+    "default_ttl_seconds": 300
+  }
+}

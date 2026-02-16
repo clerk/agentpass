@@ -1,0 +1,20 @@
+{
+  "request": {
+    "delegating_principal_email": "alex@no-agentpass-domain.example"
+  },
+  "response": {
+    "trust_mode": "federated",
+    "resolution": "federated_options",
+    "delegating_principal_domain": "no-agentpass-domain.example",
+    "trusted_federated_authorities": [
+      {
+        "issuer": "https://codex.example.com",
+        "authority_e": "https://codex.example.com/ap"
+      },
+      {
+        "issuer": "https://claude-code.example.com",
+        "authority_e": "https://claude-code.example.com/ap"
+      }
+    ]
+  }
+}

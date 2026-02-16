@@ -1,0 +1,23 @@
+{
+  "type": "service_signin_bootstrap",
+  "service": {
+    "origin": "https://service.example.com"
+  },
+  "delegating_principal_domain": "example.com",
+  "delegating_principal": {
+    "sub": "idp-subject-1234",
+    "email": "foo@example.com"
+  },
+  "agent_principal": {
+    "id": "agent:codex:workspace-1832"
+  },
+  "runtime": {
+    "instance_id": "run_01HZZ...",
+    "cnf": {
+      "jkt": "base64url(sha256(runtime_pubkey))"
+    }
+  },
+  "intent": {
+    "destination_url": "https://service.example.com/projects/abc"
+  }
+}
