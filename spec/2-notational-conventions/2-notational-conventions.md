@@ -8,7 +8,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
 Unless otherwise stated:
 
 - JSON field names are shown in monospace (for example, `delegating_principal_domain`).
-- URI templates are shown in braces (for example, `GET {e}`, `POST {authority_e}/requests`).
+- URI templates are shown in braces (for example, `GET {e}`, `POST {deployment_e}/requests`).
 - DNS names are shown using literal labels (for example, `_agentpass-authoritative.{domain}`).
 - Examples are non-normative.
 

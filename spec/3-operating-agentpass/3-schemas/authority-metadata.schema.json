@@ -1,21 +1,30 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "AgentPass Authority Metadata",
+  "title": "AgentPass Deployment Metadata",
   "type": "object",
   "required": [
     "kind",
     "issuer",
+    "trust_mode",
     "endpoints"
   ],
   "properties": {
     "kind": {
       "type": "string",
-      "const": "authority"
+      "const": "deployment"
     },
     "issuer": {
       "type": "string",
       "format": "uri",
       "pattern": "^https://"
+    },
+    "trust_mode": {
+      "type": "string",
+      "enum": [
+        "authoritative",
+        "federated"
+      ],
+      "description": "Trust mode of this AgentPass deployment. Must be consistent with the DNS discovery name used to find this deployment."
     },
     "endpoints": {
       "type": "object",

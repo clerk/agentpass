@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Service Provider Authority Resolution Request/Response",
+  "title": "Service Provider Deployment Resolution Request/Response",
   "type": "object",
   "properties": {
     "request": {
@@ -19,34 +19,18 @@
     "response": {
       "type": "object",
       "required": [
-        "trust_mode",
-        "resolution",
         "delegating_principal_domain"
       ],
       "properties": {
-        "trust_mode": {
-          "type": "string",
-          "enum": [
-            "authoritative",
-            "federated"
-          ]
-        },
-        "resolution": {
-          "type": "string",
-          "enum": [
-            "authoritative",
-            "federated_options"
-          ]
-        },
         "delegating_principal_domain": {
           "type": "string",
           "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
         },
-        "authoritative_authority": {
+        "authoritative_deployment": {
           "type": "object",
           "required": [
             "issuer",
-            "authority_e"
+            "deployment_e"
           ],
           "properties": {
             "issuer": {
@@ -54,7 +38,7 @@
               "format": "uri",
               "pattern": "^https://"
             },
-            "authority_e": {
+            "deployment_e": {
               "type": "string",
               "format": "uri",
               "pattern": "^https://"
@@ -62,13 +46,13 @@
           },
           "additionalProperties": true
         },
-        "trusted_federated_authorities": {
+        "trusted_federated_deployments": {
           "type": "array",
           "items": {
             "type": "object",
             "required": [
               "issuer",
-              "authority_e"
+              "deployment_e"
             ],
             "properties": {
               "issuer": {
@@ -76,7 +60,7 @@
                 "format": "uri",
                 "pattern": "^https://"
               },
-              "authority_e": {
+              "deployment_e": {
                 "type": "string",
                 "format": "uri",
                 "pattern": "^https://"
@@ -87,74 +71,50 @@
           "minItems": 1
         }
       },
+      "anyOf": [
+        {
+          "required": [
+            "authoritative_deployment"
+          ]
+        },
+        {
+          "required": [
+            "trusted_federated_deployments"
+          ]
+        }
+      ],
       "allOf": [
         {
           "if": {
-            "properties": {
-              "trust_mode": {
-                "const": "authoritative"
-              }
-            }
+            "required": [
+              "authoritative_deployment"
+            ]
           },
           "then": {
             "required": [
-              "authoritative_authority"
+              "authoritative_deployment"
             ],
-            "properties": {
-              "resolution": {
-                "const": "authoritative"
-              }
+            "not": {
+              "required": [
+                "trusted_federated_deployments"
+              ]
             }
           }
         },
         {
           "if": {
-            "properties": {
-              "resolution": {
-                "const": "authoritative"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "trust_mode": {
-                "const": "authoritative"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "trust_mode": {
-                "const": "federated"
-              }
-            }
+            "required": [
+              "trusted_federated_deployments"
+            ]
           },
           "then": {
             "required": [
-              "trusted_federated_authorities"
+              "trusted_federated_deployments"
             ],
-            "properties": {
-              "resolution": {
-                "const": "federated_options"
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "resolution": {
-                "const": "federated_options"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "trust_mode": {
-                "const": "federated"
-              }
+            "not": {
+              "required": [
+                "authoritative_deployment"
+              ]
             }
           }
         }

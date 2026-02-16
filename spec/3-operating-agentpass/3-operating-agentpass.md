@@ -1,10 +1,7 @@
 # 3. Operating AgentPass
 
-- 3.1 `3.1-authoritative-vs-federated.md`
-- 3.2 `3.2-discoverability-requirements.md`
-- 3.3 `3.3-agentpass-core-specification.md`
-- 3.4 `3.4-authoritative-identity-providers.md`
-- 3.5 `3.5-federated-identity-providers.md`
-- 3.6 `3.6-endpoints.md`
-- 3.7 `3.7-token-example.md`
-- Supporting artifacts: `3-schemas/` and `3-examples/`
+AgentPass is where users authorize agents to act on their behalf.
+
+An AgentPass deployment exposes endpoints that Runtimes and Service Providers use to request user authorization and to obtain the resulting artifacts/tokens after approval.
+
+AgentPass also logs approvals and delegated activity so organizations and users can review what agents requested, what was granted, and what was used.

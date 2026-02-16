@@ -3,12 +3,10 @@
     "delegating_principal_email": "alex@example.com"
   },
   "response": {
-    "trust_mode": "authoritative",
-    "resolution": "authoritative",
     "delegating_principal_domain": "example.com",
-    "authoritative_authority": {
+    "authoritative_deployment": {
       "issuer": "https://agentpass.example.com",
-      "authority_e": "https://agentpass.example.com/ap"
+      "deployment_e": "https://agentpass.example.com/ap"
     }
   }
 }

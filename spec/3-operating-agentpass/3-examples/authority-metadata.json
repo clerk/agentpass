@@ -1,6 +1,7 @@
 {
-  "kind": "authority",
+  "kind": "deployment",
   "issuer": "https://agentpass.example.com",
+  "trust_mode": "authoritative",
   "endpoints": {
     "requests": "https://agentpass.example.com/ap/requests",
     "request_status": "https://agentpass.example.com/ap/requests/{id}",

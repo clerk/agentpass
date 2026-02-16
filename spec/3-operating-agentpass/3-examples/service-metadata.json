@@ -7,13 +7,10 @@
   "trust": {
     "accepted_authorities": [
       "https://agentpass.example.com"
-    ],
-    "accepted_federated_authorities": [
-      "https://codex.example.com"
     ]
   },
   "endpoints": {
-    "resolve_authority": "https://service.example.com/ap/resolve-authority",
+    "resolve_deployments": "https://service.example.com/ap/resolve-deployments",
     "init": "https://service.example.com/ap/init",
     "initialize": "https://service.example.com/ap/initialize/{token}"
   },

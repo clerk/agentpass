@@ -15,15 +15,15 @@ This specification covers:
 - **Delegating Principal:** the human delegating authority.
 - **Agent Principal:** the software identity acting on the delegating principal's behalf.
 - **Runtime:** the execution environment that requests and presents AgentPass artifacts/tokens.
-- **AgentPass Authority:** the authority system that governs delegation, approvals, and artifact/token issuance.
+- **AgentPass deployment:** the system that governs delegation, approvals, and artifact/token issuance.
 - **Service Provider:** the application being accessed.
 
 ## High-Level Delegation Flow
 
 1. Runtime discovers whether a Service Provider supports AgentPass (DNS TXT -> `e`, then `GET {e}` for metadata).
-2. Runtime calls Service Provider `POST {e}/resolve-authority` with delegating principal email.
-3. Service Provider determines whether an Authoritative AgentPass is configured for the Delegating Principal and returns `trust_mode` with either a resolved authoritative authority or trusted federated authority options.
-4. Runtime selects authority from Service Provider response and requests delegated access from that authority.
+2. Runtime calls Service Provider `POST {e}/resolve-deployments` with delegating principal email.
+3. Service Provider determines whether an authoritative AgentPass deployment is configured for the delegating principal domain and returns either a required authoritative deployment or a set of explicitly trusted federated deployment options.
+4. Runtime uses the required deployment or prompts the user to select from the trusted options, then requests delegated access from the selected deployment.
 5. Runtime obtains asynchronous approval status (polling REQUIRED; push MAY be supported).
 6. Runtime redeems approved artifact/token at the Service Provider.
 7. For AgentPass Browser Sessions, runtime loads `initialization_url` in the emulated browser and establishes an agent-attributed session.

@@ -4,6 +4,17 @@ import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import { nitro } from 'nitro/vite'
 
+const fullReloadOnSpecMarkdownChange = {
+  name: 'full-reload-on-spec-markdown-change',
+  handleHotUpdate(ctx: { file: string; server: { ws: { send: (payload: { type: 'full-reload'; path: string }) => void } } }) {
+    if (/[\\/]spec[\\/].+\.md$/i.test(ctx.file)) {
+      ctx.server.ws.send({ type: 'full-reload', path: '*' })
+      return []
+    }
+    return undefined
+  },
+}
+
 export default defineConfig({
   server: {
     port: 3000,
@@ -13,6 +24,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    fullReloadOnSpecMarkdownChange,
     tsConfigPaths(),
     tanstackStart(),
     nitro(),

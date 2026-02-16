@@ -43,41 +43,19 @@
           },
           "minItems": 1,
           "uniqueItems": true
-        },
-        "accepted_federated_authorities": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "format": "uri",
-            "pattern": "^https://"
-          },
-          "minItems": 1,
-          "uniqueItems": true
         }
       },
-      "anyOf": [
-        {
-          "required": [
-            "accepted_authorities"
-          ]
-        },
-        {
-          "required": [
-            "accepted_federated_authorities"
-          ]
-        }
-      ],
       "additionalProperties": true
     },
     "endpoints": {
       "type": "object",
       "required": [
-        "resolve_authority",
+        "resolve_deployments",
         "init",
         "initialize"
       ],
       "properties": {
-        "resolve_authority": {
+        "resolve_deployments": {
           "type": "string",
           "pattern": "^https://"
         },
