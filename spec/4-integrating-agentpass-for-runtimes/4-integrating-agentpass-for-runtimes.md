@@ -1,6 +1,6 @@
 # 4. Runtime usage instructions
 
-This section is for Runtime implementers that request and present AgentPass credentials on behalf of users.
+This section is for Runtime implementers that request and present AgentPass credentials on behalf of Users.
 
 Examples include agent runtimes and coding agents such as Codex, Claude Code, OpenClaw, and similar execution environments.
 

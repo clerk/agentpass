@@ -1,17 +1,18 @@
 {
   "request": {
-    "delegating_principal_email": "alex@no-agentpass-domain.example"
+    "user": {
+      "email": "alex@no-agentpass-domain.example"
+    }
   },
   "response": {
-    "delegating_principal_domain": "no-agentpass-domain.example",
     "trusted_federated_deployments": [
       {
         "issuer": "https://codex.example.com",
-        "deployment_e": "https://codex.example.com/ap"
+        "agentpass_configuration_url": "https://codex.example.com/ap"
       },
       {
         "issuer": "https://claude-code.example.com",
-        "deployment_e": "https://claude-code.example.com/ap"
+        "agentpass_configuration_url": "https://claude-code.example.com/ap"
       }
     ]
   }

@@ -3,9 +3,8 @@
   "title": "AgentPass Request Create",
   "type": "object",
   "required": [
-    "agent_principal",
-    "delegating_principal",
-    "delegating_principal_domain",
+    "agent",
+    "user",
     "service",
     "type"
   ],
@@ -31,10 +30,11 @@
       },
       "additionalProperties": true
     },
-    "delegating_principal": {
+    "user": {
       "type": "object",
       "required": [
-        "sub"
+        "sub",
+        "email"
       ],
       "properties": {
         "sub": {
@@ -48,7 +48,7 @@
       },
       "additionalProperties": true
     },
-    "agent_principal": {
+    "agent": {
       "type": "object",
       "required": [
         "id"
@@ -84,11 +84,6 @@
         }
       },
       "additionalProperties": true
-    },
-    "delegating_principal_domain": {
-      "type": "string",
-      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
-      "description": "DNS domain associated with the delegating principal; used by Service Providers for authoritative precedence enforcement."
     }
   },
   "additionalProperties": true

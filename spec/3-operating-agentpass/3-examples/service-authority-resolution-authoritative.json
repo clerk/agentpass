@@ -1,12 +1,13 @@
 {
   "request": {
-    "delegating_principal_email": "alex@example.com"
+    "user": {
+      "email": "alex@example.com"
+    }
   },
   "response": {
-    "delegating_principal_domain": "example.com",
     "authoritative_deployment": {
       "issuer": "https://agentpass.example.com",
-      "deployment_e": "https://agentpass.example.com/ap"
+      "agentpass_configuration_url": "https://agentpass.example.com/ap"
     }
   }
 }

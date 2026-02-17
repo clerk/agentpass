@@ -6,31 +6,33 @@
     "request": {
       "type": "object",
       "required": [
-        "delegating_principal_email"
+        "user"
       ],
       "properties": {
-        "delegating_principal_email": {
-          "type": "string",
-          "format": "email"
+        "user": {
+          "type": "object",
+          "required": [
+            "email"
+          ],
+          "properties": {
+            "email": {
+              "type": "string",
+              "format": "email"
+            }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true
     },
     "response": {
       "type": "object",
-      "required": [
-        "delegating_principal_domain"
-      ],
       "properties": {
-        "delegating_principal_domain": {
-          "type": "string",
-          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
-        },
         "authoritative_deployment": {
           "type": "object",
           "required": [
             "issuer",
-            "deployment_e"
+            "agentpass_configuration_url"
           ],
           "properties": {
             "issuer": {
@@ -38,7 +40,7 @@
               "format": "uri",
               "pattern": "^https://"
             },
-            "deployment_e": {
+            "agentpass_configuration_url": {
               "type": "string",
               "format": "uri",
               "pattern": "^https://"
@@ -52,7 +54,7 @@
             "type": "object",
             "required": [
               "issuer",
-              "deployment_e"
+              "agentpass_configuration_url"
             ],
             "properties": {
               "issuer": {
@@ -60,7 +62,7 @@
                 "format": "uri",
                 "pattern": "^https://"
               },
-              "deployment_e": {
+              "agentpass_configuration_url": {
                 "type": "string",
                 "format": "uri",
                 "pattern": "^https://"

@@ -30,10 +30,16 @@
         "runtime_proof": {
           "type": "object"
         },
-        "delegating_principal_domain": {
-          "type": "string",
-          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
-          "description": "Delegating principal domain used by Service Providers for authoritative precedence enforcement (recommended if artifact is opaque)."
+        "user": {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string",
+              "format": "email",
+              "description": "User email used by Service Providers to derive authoritative precedence enforcement domain (recommended if artifact is opaque)."
+            }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true

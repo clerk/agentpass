@@ -7,9 +7,9 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
 
 Unless otherwise stated:
 
-- JSON field names are shown in monospace (for example, `delegating_principal_domain`).
-- URI templates are shown in braces (for example, `GET {e}`, `POST {deployment_e}/requests`).
-- DNS names are shown using literal labels (for example, `_agentpass-authoritative.{domain}`).
+- JSON field names are shown in monospace (for example, `user.email`).
+- URI templates are shown in braces (for example, `GET {agentpass_configuration_url}`, `POST {service_provider_configuration_url}/resolve-deployments`).
+- DNS names are shown using literal labels (for example, `_agentpass.{user_email_domain}`).
 - Examples are non-normative.
 
 [RFC2119]: https://www.rfc-editor.org/rfc/rfc2119
