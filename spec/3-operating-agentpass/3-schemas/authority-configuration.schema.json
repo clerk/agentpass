@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentPass Deployment Configuration",
+  "type": "object",
+  "required": [
+    "issuer",
+    "trust_mode",
+    "endpoints"
+  ],
+  "properties": {
+    "issuer": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "trust_mode": {
+      "type": "string",
+      "enum": [
+        "authoritative",
+        "federated"
+      ],
+      "description": "Trust mode of this AgentPass deployment. If authoritative, it is discoverable via `_agentpass.{user_email_domain}` where `user_email_domain` is derived from the User email address."
+    },
+    "jwks_uri": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "endpoints": {
+      "type": "object",
+      "required": [
+        "requests",
+        "request_status"
+      ],
+      "properties": {
+        "requests": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "request_status": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "events": {
+          "type": "string",
+          "pattern": "^https://"
+        }
+      },
+      "additionalProperties": true
+    },
+    "approval": {
+      "type": "object",
+      "properties": {
+        "modes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "poll",
+              "sse"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "default_ttl_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
