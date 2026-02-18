@@ -29,11 +29,11 @@
     "endpoints": {
       "type": "object",
       "required": [
-        "requests",
+        "request_create",
         "request_status"
       ],
       "properties": {
-        "requests": {
+        "request_create": {
           "type": "string",
           "pattern": "^https://"
         },
@@ -41,7 +41,7 @@
           "type": "string",
           "pattern": "^https://"
         },
-        "events": {
+        "request_events": {
           "type": "string",
           "pattern": "^https://"
         }

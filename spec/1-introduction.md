@@ -21,8 +21,8 @@ This specification covers:
 ## High-Level Delegation Flow
 
 1. Runtime discovers whether a Service Provider supports AgentPass (DNS TXT -> `service_provider_configuration_url`, then `GET {service_provider_configuration_url}` for configuration).
-2. Runtime calls Service Provider `POST {service_provider_configuration_url}/resolve-deployments` with User email.
-3. Service Provider determines whether an authoritative AgentPass deployment is configured for the User domain and returns either a required authoritative deployment or a set of explicitly trusted federated deployment options.
+2. Runtime calls Service Provider Deployment Resolution Endpoint (`POST {service_provider_deployment_resolution_url}`, from Service Provider configuration `endpoints.resolve_deployments`) with User email.
+3. Service Provider determines whether a User email domain has an Authoritative AgentPass and returns either a required authoritative deployment or a set of explicitly trusted Federated AgentPass deployment options (from deployments explicitly defined in Service Provider Configuration).
 4. Runtime uses the required deployment or prompts a human operator to select from the trusted options, then requests delegated access from the selected deployment.
 5. Runtime obtains asynchronous approval status (polling REQUIRED; push MAY be supported).
 6. Runtime redeems approved artifact/token at the Service Provider.
@@ -35,4 +35,3 @@ This specification covers:
 - Section 3 defines how to operate AgentPass.
 - Section 4 defines runtime integration requirements and flows.
 - Section 5 defines Service Provider integration requirements and flows.
-

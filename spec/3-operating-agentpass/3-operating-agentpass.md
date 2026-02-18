@@ -24,7 +24,7 @@ Terms such as User, Agent, and Effective Principal are defined in:
 
 This section specifies how an AgentPass deployment is discovered, configured, and used over HTTP:
 
-- [`3.1-authoritative-vs-federated.md`](3.1-authoritative-vs-federated.md) (trust modes and precedence rules)
+- [`3.1-authoritative-vs-federated.md`](3.1-authoritative-vs-federated.md) (trust modes)
 - [`3.2-discovery.md`](3.2-discovery.md) (authoritative discovery)
 - [`3.3-configuration.md`](3.3-configuration.md) (deployment configuration document)
 - [`3.6-endpoints.md`](3.6-endpoints.md) (request/status/JWKS endpoints)

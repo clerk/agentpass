@@ -43,6 +43,31 @@
           },
           "minItems": 1,
           "uniqueItems": true
+        },
+        "trusted_federated_deployments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "issuer",
+              "agentpass_configuration_url"
+            ],
+            "properties": {
+              "issuer": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https://"
+              },
+              "agentpass_configuration_url": {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https://"
+              }
+            },
+            "additionalProperties": true
+          },
+          "minItems": 1,
+          "uniqueItems": true
         }
       },
       "additionalProperties": true
