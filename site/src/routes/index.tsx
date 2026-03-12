@@ -12,7 +12,10 @@ function Home() {
   return (
     <HomeLayout
       {...baseOptions()}
-      links={[{ text: 'Specification', url: '/spec' }]}
+      links={[
+        { text: 'Specification', url: '/spec' },
+        { text: 'GitHub', url: 'https://github.com/clerk/agentpass', external: true },
+      ]}
       searchToggle={{ enabled: false }}
     >
       {/* Hero */}
