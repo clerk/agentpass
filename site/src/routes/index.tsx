@@ -27,7 +27,7 @@ function Home() {
           <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-fd-foreground">
             AgentPass: an open protocol for agent authorization
           </h1>
-          <p className="mt-6 text-lg text-fd-muted-foreground">
+          <p className="mt-6 text-lg text-fd-foreground">
             A <strong>Harness</strong> obtains an <strong>AgentPass</strong> from an{' '}
             <strong>Authority</strong>, then presents it to a <strong>Service</strong> to redeem
             a minimally-scoped browser session or bearer token.
@@ -51,39 +51,58 @@ function Home() {
               What is an Authority?
             </h2>
             <p className="mt-4 text-lg text-fd-muted-foreground">
-              An Authority is the trusted party responsible for approving and authorizing agent
-              tasks, defining how approvals occur and if a human must be involved. AgentPass
-              supports three types of Authority, each with a different trust model:
+              AgentPass introduces a trusted Authority to approve and scope agent tasks, instead
+              of handling authorization directly between a Harness and a Service. Three types of Authority
+              are supported, each with a different trust model:
             </p>
           </div>
           <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="rounded-lg border border-fd-border bg-fd-card p-6">
               <Building2 className="h-8 w-8 text-fd-primary mb-4" />
-              <h3 className="text-lg font-semibold text-fd-foreground">Enterprise</h3>
+              <h3 className="text-lg font-semibold text-fd-foreground">Enterprise Authority</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
-                Declared via a DNS TXT record at{' '}
-                <code className="text-xs bg-fd-accent px-1 py-0.5 rounded">
-                  _agentpass.{'{'}&zwj;domain{'}'}
-                </code>
-                . When present, it is the exclusive Authority for that domain's users and agents.
-              </p>
-            </div>
-            <div className="rounded-lg border border-fd-border bg-fd-card p-6">
-              <Cog className="h-8 w-8 text-fd-primary mb-4" />
-              <h3 className="text-lg font-semibold text-fd-foreground">Service</h3>
-              <p className="mt-2 text-sm text-fd-muted-foreground">
-                A Service can embed an Authority within its application. It's available to users
-                with no Enterprise Authority, or as an alternative when policy allows.
+                An Authority run by an organization for its employees. It enables oversight and control over agent approvals.
               </p>
             </div>
             <div className="rounded-lg border border-fd-border bg-fd-card p-6">
               <Link className="h-8 w-8 text-fd-primary mb-4" />
-              <h3 className="text-lg font-semibold text-fd-foreground">Federated</h3>
+              <h3 className="text-lg font-semibold text-fd-foreground">Federated Authority</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
-                With explicit opt-in, a Service may trust a third-party Federated Authority,
-                which may be operated by a Harness or an independent identity provider.
+                A shared Authority for users not part of an Enterprise Authority. It centralizes agent approvals across many Services.
+              </p>
+              <p className="mt-2 text-xs text-fd-muted-foreground">
+                Note: Services must explicitly configure the Federated Authorities they trust.
               </p>
             </div>
+            <div className="rounded-lg border border-fd-border bg-fd-card p-6">
+              <Cog className="h-8 w-8 text-fd-primary mb-4" />
+              <h3 className="text-lg font-semibold text-fd-foreground">Service Authority</h3>
+              <p className="mt-2 text-sm text-fd-muted-foreground">
+                An Authority run by a Service for its own users. It allows the Service to offer a custom agent approval experience.
+              </p>
+            </div>
+          </div>
+          <div className="max-w-3xl mx-auto px-6 mt-12">
+            <h3 className="text-xl md:text-2xl font-bold text-fd-foreground">
+              Why have Authorities?
+            </h3>
+            <p className="mt-4 text-lg text-fd-muted-foreground">
+              Authorities make authenticated agents easier to adopt and manage. They enable:
+            </p>
+            <ul className="mt-6 space-y-4">
+              <li>
+                <strong className="text-fd-foreground">Centralized approvals</strong>:{' '}
+                <span className="text-fd-muted-foreground">Enterprise and Federated Authorities give users a single place to review and approve agent authorization requests across many Services, instead of requiring them to visit each Service separately.</span>
+              </li>
+              <li>
+                <strong className="text-fd-foreground">Automated signups</strong>:{' '}
+                <span className="text-fd-muted-foreground">Since Enterprise and Federated Authorities are trusted, Services can use the identities they provide to create accounts on demand. This enables new Service adoption from within a Harness, without completing a separate signup flow at each Service.</span>
+              </li>
+              <li>
+                <strong className="text-fd-foreground">Enterprise readiness</strong>:{' '}
+                <span className="text-fd-muted-foreground">Enterprise Authorities provide agent oversight by default. Once established for a domain, Services defer to them automatically, without the per-Service setup typical of enterprise SSO.</span>
+              </li>
+            </ul>
           </div>
         </div>
       </section>
@@ -92,7 +111,7 @@ function Home() {
       <section className="py-16 md:py-24 border-t border-fd-border">
         <div className="max-w-3xl mx-auto px-6">
           <h2 className="text-2xl md:text-3xl font-bold text-fd-foreground">
-            Security by design
+            Secure by design
           </h2>
           <p className="mt-4 text-lg text-fd-muted-foreground mb-12">
             AgentPass credentials are designed around zero-trust principles.
@@ -144,8 +163,8 @@ function Home() {
               'A Harness is executing a task that requires authorization from a Service.',
               'The Harness discovers the Service\u2019s AgentPass configuration via DNS.',
               'The Harness provides the email of the user or agent it\u2019s acting on behalf of.',
-              'The Service resolves the Authority using the email domain.',
-              'The Harness requests an AgentPass from the Authority that is scoped to the email and task.',
+              'The Service returns a list of trusted Authorities for the provided email domain.',
+              'The Harness chooses an Authority and requests an AgentPass scoped to the email and task.',
               'The Authority discovers the available scopes from the Service.',
               'The Authority obtains approval for the task, determining which scopes are granted and whether a human-in-the-loop is required.',
               'The Authority issues a single-use AgentPass to the Harness.',
