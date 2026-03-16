@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { HomeLayout } from 'fumadocs-ui/layouts/home'
-import { Building2, Cog, Hash, KeyRound, Link, RefreshCw, Target } from 'lucide-react'
+import { Building2, Cog, Hash, KeyRound, Link, Lock, RefreshCw, Target } from 'lucide-react'
 import { baseOptions } from '../lib/layout.shared'
 
 export const Route = createFileRoute('/')({
@@ -57,28 +57,37 @@ function Home() {
             </p>
           </div>
           <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="rounded-lg border border-fd-border bg-fd-card p-6">
+            <div className="rounded-lg border border-fd-border bg-fd-card p-6 flex flex-col">
               <Building2 className="h-8 w-8 text-fd-primary mb-4" />
               <h3 className="text-lg font-semibold text-fd-foreground">Enterprise Authority</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
                 An Authority run by an organization for its employees. It enables oversight and control over agent approvals.
               </p>
+              <p className="mt-auto pt-4 text-xs text-fd-muted-foreground flex items-start gap-1.5">
+                <Lock className="h-3 w-3 shrink-0 mt-0.5" />
+                Compare to enterprise SSO
+              </p>
             </div>
-            <div className="rounded-lg border border-fd-border bg-fd-card p-6">
+            <div className="rounded-lg border border-fd-border bg-fd-card p-6 flex flex-col">
               <Link className="h-8 w-8 text-fd-primary mb-4" />
               <h3 className="text-lg font-semibold text-fd-foreground">Federated Authority</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
                 A shared Authority for users not part of an Enterprise Authority. It centralizes agent approvals across many Services.
               </p>
-              <p className="mt-2 text-xs text-fd-muted-foreground">
-                Note: Services must explicitly configure the Federated Authorities they trust.
+              <p className="mt-auto pt-4 text-xs text-fd-muted-foreground flex items-start gap-1.5">
+                <Lock className="h-3 w-3 shrink-0 mt-0.5" />
+                Compare to &ldquo;Sign in with Google&rdquo;
               </p>
             </div>
-            <div className="rounded-lg border border-fd-border bg-fd-card p-6">
+            <div className="rounded-lg border border-fd-border bg-fd-card p-6 flex flex-col">
               <Cog className="h-8 w-8 text-fd-primary mb-4" />
               <h3 className="text-lg font-semibold text-fd-foreground">Service Authority</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
                 An Authority run by a Service for its own users. It allows the Service to offer a custom agent approval experience.
+              </p>
+              <p className="mt-auto pt-4 text-xs text-fd-muted-foreground flex items-start gap-1.5">
+                <Lock className="h-3 w-3 shrink-0 mt-0.5" />
+                Compare to self-verified email/password
               </p>
             </div>
           </div>
@@ -100,7 +109,7 @@ function Home() {
               </li>
               <li>
                 <strong className="text-fd-foreground">Enterprise readiness</strong>:{' '}
-                <span className="text-fd-muted-foreground">Enterprise Authorities provide agent oversight by default. Once established for a domain, Services defer to them automatically, without the per-Service setup typical of enterprise SSO.</span>
+                <span className="text-fd-muted-foreground">Enterprise Authorities provide agent oversight by default. Once a domain publishes its Authority via DNS, Services automatically defer to it—avoiding the per-Service setup typical of enterprise SSO.</span>
               </li>
             </ul>
           </div>
@@ -117,7 +126,7 @@ function Home() {
             AgentPass issues short-lived, single-use credentials for a single task, so access stays governed by the Authority instead of accumulating inside the Harness.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="rounded-lg border border-fd-border bg-fd-card p-6">
+            <div className="rounded-lg border border-fd-border bg-fd-card p-6 flex flex-col">
               <Target className="h-8 w-8 text-fd-primary mb-4" />
               <h3 className="text-lg font-semibold text-fd-foreground">Task-scoped</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
@@ -125,14 +134,14 @@ function Home() {
                 bound at issuance.
               </p>
             </div>
-            <div className="rounded-lg border border-fd-border bg-fd-card p-6">
+            <div className="rounded-lg border border-fd-border bg-fd-card p-6 flex flex-col">
               <Hash className="h-8 w-8 text-fd-primary mb-4" />
               <h3 className="text-lg font-semibold text-fd-foreground">Single-use</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
                 AgentPasses are consumed atomically on first use. Replay is impossible.
               </p>
             </div>
-            <div className="rounded-lg border border-fd-border bg-fd-card p-6">
+            <div className="rounded-lg border border-fd-border bg-fd-card p-6 flex flex-col">
               <KeyRound className="h-8 w-8 text-fd-primary mb-4" />
               <h3 className="text-lg font-semibold text-fd-foreground">Holder-bound</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
@@ -140,7 +149,7 @@ function Home() {
                 an AgentPass.
               </p>
             </div>
-            <div className="rounded-lg border border-fd-border bg-fd-card p-6">
+            <div className="rounded-lg border border-fd-border bg-fd-card p-6 flex flex-col">
               <RefreshCw className="h-8 w-8 text-fd-primary mb-4" />
               <h3 className="text-lg font-semibold text-fd-foreground">Continuously validated</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
@@ -152,6 +161,17 @@ function Home() {
       </section>
 
       {/* How It Works */}
+      <section className="py-16 md:py-24 border-t border-fd-border">
+        <div className="max-w-3xl mx-auto px-6">
+          <h2 className="text-2xl md:text-3xl font-bold text-fd-foreground">
+            One authorization flow, many access models
+          </h2>
+          <p className="mt-4 text-lg text-fd-muted-foreground">
+            AgentPass is interface-agnostic. Once approved, the AgentPass is redeemed at the Service for the access the task requires, either an authenticated browser session or a bearer token for APIs, CLIs, and MCPs.
+          </p>
+        </div>
+      </section>
+
       <section className="py-16 md:py-24 border-t border-fd-border">
         <div className="max-w-3xl mx-auto px-6">
           <h2 className="text-2xl md:text-3xl font-bold text-fd-foreground mb-12">
@@ -186,7 +206,7 @@ function Home() {
       <section className="py-16 md:py-24 border-t border-fd-border">
         <div className="max-w-3xl mx-auto px-6 text-center">
           <p className="text-lg text-fd-muted-foreground">
-            AgentPass is an open specification. Read the spec or build an integration.
+            AgentPass is <a href="https://github.com/clerk/agentpass" target="_blank" rel="noopener noreferrer" className="text-fd-foreground underline hover:text-fd-primary">open source</a> and developed by <a href="https://clerk.com" target="_blank" rel="noopener noreferrer" className="text-fd-foreground underline hover:text-fd-primary">Clerk</a>.
           </p>
         </div>
       </section>
