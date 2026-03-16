@@ -1,0 +1,33 @@
+services:
+  authority:
+    build:
+      context: ..
+      dockerfile: examples/authority-app/Dockerfile
+      args:
+        - VITE_CLERK_PUBLISHABLE_KEY=${AUTHORITY_CLERK_PUBLISHABLE_KEY}
+        - VITE_AUTHORITY_URL=http://localhost:8787/agentpass-authority
+    ports:
+      - "8787:8787"
+    environment:
+      - AUTHORITY_ORIGIN=http://localhost:8787
+      - TRUST_MODE=federated
+      - SIGNING_KEY_ID=authority-key-1
+      - SIGNING_KEY=${AUTHORITY_SIGNING_KEY}
+      - INTERNAL_ORIGIN_OVERRIDES=http://localhost:8788=http://todo-service:8788
+      - SERVICE_CONFIG_OVERRIDES=http://localhost:8788=http://todo-service:8788/agentpass-service/config.json
+
+  todo-service:
+    build:
+      context: ..
+      dockerfile: examples/todo-service/Dockerfile
+      args:
+        - VITE_CLERK_PUBLISHABLE_KEY=${SERVICE_CLERK_PUBLISHABLE_KEY}
+        - VITE_API_URL=http://localhost:8788
+    ports:
+      - "8788:8788"
+    environment:
+      - SERVICE_ORIGIN=http://localhost:8788
+      - SIGNING_KEY_ID=service-key-1
+      - SIGNING_KEY=${SERVICE_SIGNING_KEY}
+      - AUTHORITY_URL=http://localhost:8787
+      - INTERNAL_ORIGIN_OVERRIDES=http://localhost:8787=http://authority:8787

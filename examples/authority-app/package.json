@@ -1,0 +1,26 @@
+{
+  "name": "agentpass-authority-example",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "worker:dev": "wrangler dev worker/index.ts --port 8787"
+  },
+  "dependencies": {
+    "@agentpass/authority": "file:../../packages/authority",
+    "@clerk/react": "^6.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "wrangler": "^4.0.0"
+  }
+}

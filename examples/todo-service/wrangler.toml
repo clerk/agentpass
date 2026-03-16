@@ -1,0 +1,12 @@
+name = "agentpass-todo-service"
+main = "worker/index.ts"
+compatibility_date = "2024-12-01"
+
+[assets]
+directory = "dist"
+
+[vars]
+SERVICE_ORIGIN = "http://localhost:8788"
+SIGNING_KEY_ID = "service-key-1"
+AUTHORITY_URL = "http://localhost:8787"
+AUTHORITY_CONFIG_OVERRIDES = ""

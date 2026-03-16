@@ -4,6 +4,8 @@ title: AgentPass Specification
 
 # AgentPass Specification
 
+***WARNING: This specification is work-in-progress. It has not been security-audited and is subject to change. Do not use in production environments.***
+
 Version: 0.1 (Draft)
 
 Table of Contents
@@ -55,7 +57,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
 Unless otherwise stated:
 
 - JSON field names are shown in monospace (for example, `user.email`).
-- URI templates and endpoint name variables are shown in braces (for example, `GET {agentpass_configuration_url}`, `POST {service_authority_resolution_url}`).
+- URI templates and endpoint name variables are shown in braces (for example, `GET {authority_configuration_url}`, `POST {service_authority_resolution_url}`).
 - DNS names are shown using literal labels (for example, `_agentpass.{user_email_domain}`).
 - Examples are non-normative.
 
@@ -151,7 +153,7 @@ The attestation JWT MUST be signed by the trusted third party (the `iss`), NOT b
 When `harness.attestation` is present in an issuance request, the Authority MUST:
 
 1. Decode the attestation JWT and extract the `iss` claim.
-2. Fetch the attestation signer's JWKS from a well-known endpoint for that issuer.
+2. Fetch the attestation signer's JWKS from a JWKS endpoint for that issuer.
 3. Verify the attestation JWT signature against the signer's published keys.
 4. Verify that the attestation `cnf.jwk` matches `harness.cnf.jwk` in the issuance request.
 5. Verify that the attestation is not expired.
@@ -250,7 +252,7 @@ If `response.trusted_federated_authorities` is present:
 - Harness MUST choose exactly one authority from that list (typically by asking a human operator which provider they prefer).
 - Harness MUST NOT use an authority outside that list.
 
-Harness MUST NOT perform direct authoritative discovery as part of this flow.
+Harness MUST NOT perform direct enterprise discovery as part of this flow.
 
 #### 3.2.3. Request Issuance [#s-3-2-3]
 
@@ -258,7 +260,7 @@ Harness MUST call:
 
 - the Issuance Endpoint: `POST {agentpass_issuance_url}`
 
-Where `agentpass_issuance_url` is obtained by fetching AgentPass configuration from the selected authority `agentpass_configuration_url` returned by the Authority Resolution Endpoint, and then using `endpoints.issuance`.
+Where `agentpass_issuance_url` is obtained by fetching AgentPass configuration from the selected authority `authority_configuration_url` returned by the Authority Resolution Endpoint, and then using `endpoints.issuance`.
 
 Request body MUST conform to the `issuance-request` schema (Appendix A).
 
@@ -339,7 +341,7 @@ Request/response MUST conform to the `service-redeem-browser-session` schema (Ap
 Harness MUST include:
 
 - `request.agentpass` from approved issuance response
-- `request.authority` — the Authority identifier (`authority` field from `GET {agentpass_configuration_url}`)
+- `request.authority` — the Authority identifier (`authority` field from `GET {authority_configuration_url}`)
 
 Harness SHOULD include:
 
@@ -349,7 +351,7 @@ Harness MAY include:
 
 - `request.requested_scope` — array of scope strings the Harness wants for this session. When present, the Service computes the intersection with the Authority-approved scope and grants only the intersection. This enables least-privilege access when the Harness does not need the full approved scope.
 
-Harness MUST include `request.user.email` for authoritative precedence domain derivation.
+Harness MUST include `request.user.email` for enterprise precedence domain derivation.
 
 #### 3.3.2. Initialize Browser Session [#s-3-3-2]
 
@@ -378,7 +380,7 @@ Request/response MUST conform to the `service-redeem-bearer-token` schema (Appen
 Harness MUST include:
 
 - `request.agentpass` from approved issuance response
-- `request.authority` — the Authority identifier (`authority` field from `GET {agentpass_configuration_url}`)
+- `request.authority` — the Authority identifier (`authority` field from `GET {authority_configuration_url}`)
 - `request.user.email`
 
 Harness SHOULD include:
@@ -442,17 +444,17 @@ This section defines the JSON configuration document returned by a **Service Con
     "origin": "https://api.example.com",
     "name": "Example Service"
   },
-  "jwks_uri": "https://api.example.com/.well-known/jwks.json",
+  "jwks_uri": "https://api.example.com/agentpass-service/jwks.json",
   "trust": {
     "trusted_federated_authorities": [
       {
         "authority": "https://codex.example.com",
-        "agentpass_configuration_url": "https://codex.example.com/ap"
+        "authority_configuration_url": "https://codex.example.com/ap"
       }
     ],
     "service_authority": {
       "authority": "https://api.example.com/agentpass",
-      "agentpass_configuration_url": "https://api.example.com/agentpass/ap"
+      "authority_configuration_url": "https://api.example.com/agentpass/ap"
     }
   },
   "endpoints": {
@@ -474,7 +476,7 @@ This section defines the JSON configuration document returned by a **Service Con
 - `jwks_uri` (required): JWKS URL for Service request signing. Used by Authorities to verify Service identity when processing AgentPass validation and scope refresh requests.
 - `trust` (required): trust declarations.
 - `trust.trusted_federated_authorities` (optional): list of Federated Authorities this Service is willing to trust (HTTPS). Returned federated options from the Authority Resolution Endpoint MUST be a subset of this list.
-- `trust.service_authority` (optional): a single Authority with `trust_mode = "service"` operated by this Service. When configured, the Service MAY use this Authority even when an Enterprise Authority exists, subject to the Enterprise Authority's `policy.allow_service_authorities` setting (Section 5.2). Same shape as a `trusted_federated_authorities` entry (`authority`, `agentpass_configuration_url`).
+- `trust.service_authority` (optional): a single Authority with `trust_mode = "service"` operated by this Service. When configured, the Service MAY use this Authority even when an Enterprise Authority exists, subject to the Enterprise Authority's `policy.allow_service_authorities` setting (Section 5.2). Same shape as a `trusted_federated_authorities` entry (`authority`, `authority_configuration_url`).
 - `endpoints` (required): Service integration endpoints.
 - `endpoints.resolve_authorities` (required): authority-resolution endpoint (`POST`).
 - `endpoints.redeem_browser_session` (required): browser session AgentPass redemption endpoint (`POST`).
@@ -495,7 +497,7 @@ For readability, this spec uses the following endpoint name variables derived fr
 
 #### Consumer Behavior
 
-Harnesses MUST use the Service authority-resolution endpoint (not direct authoritative discovery) to obtain acceptable authority selection for browser-session and bearer-token flows.
+Harnesses MUST use the Service authority-resolution endpoint (not direct enterprise discovery) to obtain acceptable authority selection for browser-session and bearer-token flows.
 
 Services remain the final policy and trust enforcement point at redemption and initialization time.
 
@@ -530,14 +532,14 @@ Service MUST accept JSON body containing:
 Service MUST:
 
 1. Derive the User email domain from the email domain portion of `request.user.email`.
-2. Determine whether the derived User email domain has an Enterprise Authority by performing authoritative discovery for that domain (`_agentpass.{user_email_domain}`) (Section 5.2).
-3. If authoritative discovery returns a URL and the discovered Enterprise Authority configuration can be fetched and validated:
+2. Determine whether the derived User email domain has an Enterprise Authority by performing enterprise discovery for that domain (`_agentpass.{user_email_domain}`) (Section 5.2).
+3. If enterprise discovery returns a URL and the discovered Enterprise Authority configuration can be fetched and validated:
    - If the Service has a `trust.service_authority` configured, fetch the Enterprise Authority's configuration and check `policy.allow_service_authorities` (default `true`). If `true`, Service MAY return the Service Authority instead of the Enterprise Authority. If `false`, Service MUST return the Enterprise Authority.
    - Otherwise, return the Enterprise Authority.
-4. If authoritative discovery returns `none`, or if authoritative discovery returns a URL but the discovered configuration cannot be fetched or validated, reject the request and MUST NOT return Federated Authority or Service Authority options.
-5. If authoritative discovery does not resolve (no DNS record), return only trusted Federated Authority options that are explicitly defined in Service Configuration (`trust.trusted_federated_authorities`) and selected by Service policy.
+4. If enterprise discovery returns `none`, or if enterprise discovery returns a URL but the discovered configuration cannot be fetched or validated, reject the request and MUST NOT return Federated Authority or Service Authority options.
+5. If enterprise discovery does not resolve (no DNS record), return only trusted Federated Authority options that are explicitly defined in Service Configuration (`trust.trusted_federated_authorities`) and selected by Service policy.
 
-Service MUST NOT return federated options when authoritative discovery returns a usable Enterprise Authority.
+Service MUST NOT return federated options when enterprise discovery returns a usable Enterprise Authority.
 If a User email domain has an Enterprise Authority, Service MUST only authorize agents delegated by that Enterprise Authority or by the Service Authority (when permitted by the Enterprise Authority's policy).
 
 Services MUST enforce the same precedence rules at redemption time (Section 4.4, step 3).
@@ -561,9 +563,9 @@ Service MUST treat federated providers as high-trust dependencies and MUST NOT r
 Suggested status classes:
 
 - `400` malformed request or invalid email
-- `404` no authoritative provider and no trusted federated options
-- `403` authoritative precedence enforcement rejection (for example, discovery returns `none`)
-- `502` authoritative discovery configuration fetch/validation failure
+- `404` no enterprise authority and no trusted federated options
+- `403` enterprise precedence enforcement rejection (for example, discovery returns `none`)
+- `502` enterprise discovery configuration fetch/validation failure
 - `422` semantically invalid resolution request
 - `5xx` transient Service failure
 
@@ -583,7 +585,7 @@ Authority MUST authenticate using a signed JWT assertion. The assertion MUST be 
 
 Required assertion claims:
 
-- `iss` (string): the Authority identifier (MUST equal `authority` from `GET {agentpass_configuration_url}`).
+- `iss` (string): the Authority identifier (MUST equal `authority` from `GET {authority_configuration_url}`).
 - `aud` (string): the Service origin.
 - `iat` (number): issuance time.
 - `exp` (number): expiration time (SHOULD be short-lived).
@@ -883,7 +885,7 @@ Suggested status classes:
 
 Services MUST log User, Agent, and Task identifiers from the Authority validation response (`user.email`, `agent.id`, and `task.id` when present).
 
-Services SHOULD enforce authoritative precedence per Section 4.2.
+Services SHOULD enforce enterprise precedence per Section 4.2.
 
 ## 5. Authority Protocol [#s-5]
 
@@ -905,13 +907,13 @@ Each Authority operates in one of three trust modes:
 - `federated`
 - `service`
 
-An Authority MUST declare its `trust_mode` in its configuration (`GET {agentpass_configuration_url}`).
+An Authority MUST declare its `trust_mode` in its configuration (`GET {authority_configuration_url}`).
 
 #### 5.1.1. Enterprise Trust Mode
 
 `trust_mode = "enterprise"` (an **Enterprise Authority**) is intended for organizations that need enterprise control over how their members delegate to agents, including policy enforcement, approval control, and auditable attribution.
 
-To prove its authority, an Enterprise Authority MUST publish an authoritative discovery DNS TXT record for each User email domain it serves (`_agentpass.{user_email_domain}`) (Section 5.2).
+To prove its authority, an Enterprise Authority MUST publish an enterprise discovery DNS TXT record for each User email domain it serves (`_agentpass.{user_email_domain}`) (Section 5.2).
 
 #### 5.1.2. Federated Trust Mode
 
@@ -932,19 +934,19 @@ Trust is inherent: the Service trusts itself, so no explicit trust configuration
 
 A Service Authority MAY be used even when an Enterprise Authority exists for the User's email domain, subject to the Enterprise Authority's `policy.allow_service_authorities` setting (Section 5.2).
 
-Service Authorities are not discoverable via User email domain DNS. The AgentPass Configuration URL is known to the Service because it operates the Authority.
+Service Authorities are not discoverable via User email domain DNS. The Authority Configuration URL is known to the Service because it operates the Authority.
 
 ### 5.2. Discovery and Configuration [#s-5-2]
 
-All information that Services and Harnesses need to interact with an Authority is obtained by fetching the authority's configuration document from its **AgentPass Configuration URL** (`GET {agentpass_configuration_url}`).
+All information that Services and Harnesses need to interact with an Authority is obtained by fetching the authority's configuration document from its **Authority Configuration URL** (`GET {authority_configuration_url}`).
 
-This section defines how an AgentPass Configuration URL is discovered.
+This section defines how an Authority Configuration URL is discovered.
 
 #### 5.2.1. Enterprise Authority Discovery
 
 For a given User email domain, there can be at most one Enterprise Authority.
 
-If an Enterprise Authority exists for a User email domain, its AgentPass Configuration URL MUST be discoverable via DNS TXT lookup at:
+If an Enterprise Authority exists for a User email domain, its Authority Configuration URL MUST be discoverable via DNS TXT lookup at:
 
 - `_agentpass.{user_email_domain}`
 
@@ -952,14 +954,14 @@ Where `user_email_domain` is derived from `user.email` (the domain portion of th
 
 The TXT value MUST be either:
 
-- an `https://` URL (the **AgentPass Configuration URL** `{agentpass_configuration_url}`), or
+- an `https://` URL (the **Authority Configuration URL** `{authority_configuration_url}`), or
 - the literal string `none` to explicitly disable delegation for that domain.
 
 If the TXT value is a URL, clients MUST fetch the configuration document by calling:
 
-- `GET {agentpass_configuration_url}`
+- `GET {authority_configuration_url}`
 
-If the TXT value is `none`, clients MUST treat authoritative discovery as successful-but-disabled and MUST NOT fall back to a federated authority.
+If the TXT value is `none`, clients MUST treat enterprise discovery as successful-but-disabled and MUST NOT fall back to a federated authority.
 
 **Parsing**
 
@@ -985,9 +987,9 @@ All HTTPS endpoints in this specification MUST use TLS 1.2 or later. Clients MUS
 
 Federated Authorities are not discoverable via User email domain DNS.
 
-Operators of Federated Authorities MUST share the AgentPass Configuration URL with Services out-of-band if they want the authority to be considered for trust by Service policy.
+Operators of Federated Authorities MUST share the Authority Configuration URL with Services out-of-band if they want the authority to be considered for trust by Service policy.
 
-This section defines the JSON configuration document returned by an **AgentPass Configuration URL**.
+This section defines the JSON configuration document returned by an **Authority Configuration URL**.
 
 For readability, this spec uses the following endpoint name variables derived from this configuration document:
 
@@ -1003,7 +1005,7 @@ For readability, this spec uses the following endpoint name variables derived fr
   "version": "0.1",
   "authority": "https://agentpass.example.com",
   "trust_mode": "enterprise",
-  "jwks_uri": "https://agentpass.example.com/.well-known/jwks.json",
+  "jwks_uri": "https://agentpass.example.com/agentpass-authority/jwks.json",
   "endpoints": {
     "issuance": "https://agentpass.example.com/requests",
     "issuance_status": "https://agentpass.example.com/requests/{id}",
@@ -1041,7 +1043,7 @@ JSON schema: see `authority-configuration.schema.json` (Appendix A).
 
 ### 5.3. AgentPass Issuance [#s-5-3]
 
-AgentPass issuance endpoint URLs are obtained from the AgentPass configuration document (`GET {agentpass_configuration_url}`) (Section 5.2).
+AgentPass issuance endpoint URLs are obtained from the AgentPass configuration document (`GET {authority_configuration_url}`) (Section 5.2).
 
 #### 5.3.1. Issuance Endpoint [#s-5-3-1]
 
@@ -1069,7 +1071,7 @@ Required fields:
 - `task.id`
 - `task.description`
 
-Harness typically obtains the selected authority AgentPass Configuration URL (`agentpass_configuration_url`) from the Service Authority Resolution Endpoint (`POST {service_authority_resolution_url}`) response.
+Harness typically obtains the selected authority Authority Configuration URL (`authority_configuration_url`) from the Service Authority Resolution Endpoint (`POST {service_authority_resolution_url}`) response.
 
 For AgentPass browser sessions requests, client SHOULD include `intent.destination_url` when available.
 
@@ -1653,7 +1655,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
           "type": "object",
           "required": [
             "authority",
-            "agentpass_configuration_url"
+            "authority_configuration_url"
           ],
           "properties": {
             "authority": {
@@ -1661,7 +1663,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
               "format": "uri",
               "pattern": "^https://"
             },
-            "agentpass_configuration_url": {
+            "authority_configuration_url": {
               "type": "string",
               "format": "uri",
               "pattern": "^https://"
@@ -1675,7 +1677,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
             "type": "object",
             "required": [
               "authority",
-              "agentpass_configuration_url"
+              "authority_configuration_url"
             ],
             "properties": {
               "authority": {
@@ -1683,7 +1685,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
                 "format": "uri",
                 "pattern": "^https://"
               },
-              "agentpass_configuration_url": {
+              "authority_configuration_url": {
                 "type": "string",
                 "format": "uri",
                 "pattern": "^https://"
@@ -1697,7 +1699,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
           "type": "object",
           "required": [
             "authority",
-            "agentpass_configuration_url"
+            "authority_configuration_url"
           ],
           "properties": {
             "authority": {
@@ -1705,7 +1707,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
               "format": "uri",
               "pattern": "^https://"
             },
-            "agentpass_configuration_url": {
+            "authority_configuration_url": {
               "type": "string",
               "format": "uri",
               "pattern": "^https://"
@@ -1790,7 +1792,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
             "type": "object",
             "required": [
               "authority",
-              "agentpass_configuration_url"
+              "authority_configuration_url"
             ],
             "properties": {
               "authority": {
@@ -1798,7 +1800,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
                 "format": "uri",
                 "pattern": "^https://"
               },
-              "agentpass_configuration_url": {
+              "authority_configuration_url": {
                 "type": "string",
                 "format": "uri",
                 "pattern": "^https://"
@@ -1813,7 +1815,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
           "type": "object",
           "required": [
             "authority",
-            "agentpass_configuration_url"
+            "authority_configuration_url"
           ],
           "properties": {
             "authority": {
@@ -1821,7 +1823,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
               "format": "uri",
               "pattern": "^https://"
             },
-            "agentpass_configuration_url": {
+            "authority_configuration_url": {
               "type": "string",
               "format": "uri",
               "pattern": "^https://"
@@ -1921,7 +1923,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
             "email": {
               "type": "string",
               "format": "email",
-              "description": "User email used by Services for authoritative precedence domain derivation."
+              "description": "User email used by Services for enterprise precedence domain derivation."
             }
           },
           "additionalProperties": true
@@ -2243,7 +2245,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
   "response": {
     "enterprise_authority": {
       "authority": "https://agentpass.example.com",
-      "agentpass_configuration_url": "https://agentpass.example.com/ap"
+      "authority_configuration_url": "https://agentpass.example.com/ap"
     }
   }
 }
@@ -2261,7 +2263,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
   "response": {
     "service_authority": {
       "authority": "https://api.example.com/agentpass",
-      "agentpass_configuration_url": "https://api.example.com/agentpass/ap"
+      "authority_configuration_url": "https://api.example.com/agentpass/ap"
     }
   }
 }
@@ -2280,11 +2282,11 @@ All endpoints defined in this specification SHOULD return structured JSON error 
     "trusted_federated_authorities": [
       {
         "authority": "https://codex.example.com",
-        "agentpass_configuration_url": "https://codex.example.com/ap"
+        "authority_configuration_url": "https://codex.example.com/ap"
       },
       {
         "authority": "https://claude-code.example.com",
-        "agentpass_configuration_url": "https://claude-code.example.com/ap"
+        "authority_configuration_url": "https://claude-code.example.com/ap"
       }
     ]
   }

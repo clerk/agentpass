@@ -1,0 +1,24 @@
+name = "agentpass-authority"
+main = "worker/index.ts"
+compatibility_date = "2024-12-01"
+
+[assets]
+directory = "dist"
+
+[vars]
+AUTHORITY_ORIGIN = "http://localhost:8787"
+TRUST_MODE = "federated"
+SIGNING_KEY_ID = "authority-key-1"
+
+[[durable_objects.bindings]]
+name = "ISSUANCE_DO"
+class_name = "IssuanceDO"
+
+[[durable_objects.bindings]]
+name = "ISSUANCE_INDEX_DO"
+class_name = "IssuanceIndexDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["IssuanceDO"]
+new_sqlite_classes = ["IssuanceIndexDO"]

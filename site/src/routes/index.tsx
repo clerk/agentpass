@@ -111,10 +111,10 @@ function Home() {
       <section className="py-16 md:py-24 border-t border-fd-border">
         <div className="max-w-3xl mx-auto px-6">
           <h2 className="text-2xl md:text-3xl font-bold text-fd-foreground">
-            Secure by design
+            Authorize the task, not the Harness
           </h2>
           <p className="mt-4 text-lg text-fd-muted-foreground mb-12">
-            AgentPass credentials are designed around zero-trust principles.
+            AgentPass issues short-lived, single-use credentials for a single task, so access stays governed by the Authority instead of accumulating inside the Harness.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="rounded-lg border border-fd-border bg-fd-card p-6">
@@ -144,8 +144,7 @@ function Home() {
               <RefreshCw className="h-8 w-8 text-fd-primary mb-4" />
               <h3 className="text-lg font-semibold text-fd-foreground">Continuously validated</h3>
               <p className="mt-2 text-sm text-fd-muted-foreground">
-                Services verify delegation validity throughout the session. Revocation takes
-                effect immediately.
+                Services re-verify authorization throughout the session to check for revocation.
               </p>
             </div>
           </div>
