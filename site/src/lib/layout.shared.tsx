@@ -6,7 +6,7 @@ export function baseOptions(): BaseLayoutProps {
     nav: {
       title: (
         <>
-          <img src={Logo} alt="AgentPass" width={32} height={24} style={{ position: 'relative', top: 1 }} />
+          <img src={Logo} alt="AgentPass" width={32} height={24} className="dark:invert" style={{ position: 'relative', top: 1 }} />
           AgentPass
         </>
       ),

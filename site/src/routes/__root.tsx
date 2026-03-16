@@ -8,6 +8,15 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+      { name: 'description', content: 'An open protocol for agent authorization' },
+      { property: 'og:title', content: 'AgentPass' },
+      { property: 'og:description', content: 'An open protocol for agent authorization' },
+      { property: 'og:image', content: '/og.png' },
+      { property: 'og:type', content: 'website' },
+      { name: 'twitter:card', content: 'summary_large_image' },
+      { name: 'twitter:title', content: 'AgentPass' },
+      { name: 'twitter:description', content: 'An open protocol for agent authorization' },
+      { name: 'twitter:image', content: '/og.png' },
     ],
     links: [
       { rel: 'stylesheet', href: appCss },
