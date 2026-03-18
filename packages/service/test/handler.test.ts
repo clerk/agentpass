@@ -121,6 +121,31 @@ describe('Service Handler', () => {
       expect(res.status).toBe(403);
     });
 
+    it('prefers service authority over federated authorities when no enterprise DNS exists', async () => {
+      const serviceAuthorityHandler = createServiceHandler({
+        ...baseConfig,
+        trust: {
+          ...baseConfig.trust,
+          serviceAuthority: {
+            authority: 'https://service-authority.example.com',
+            authority_configuration_url: 'https://service-authority.example.com/ap',
+          },
+        },
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/resolve-authorities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: { email: 'alex@example.com' } }),
+      });
+
+      const res = await serviceAuthorityHandler(req);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as { service_authority: { authority: string } };
+      expect(body.service_authority.authority).toBe('https://service-authority.example.com');
+    });
+
     it('uses custom resolver when provided', async () => {
       const customHandler = createServiceHandler({
         ...baseConfig,

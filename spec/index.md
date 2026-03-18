@@ -693,7 +693,7 @@ Service MUST perform the following checks during redemption:
 
 1. Protocol validation (required fields, parseability).
 2. Authority trust validation: verify `request.authority` is trusted per Service trust policy.
-3. Authoritative precedence enforcement per Section 4.2. When the AgentPass was issued by the Service Authority (`request.authority` matches `trust.service_authority.authority`) and the Enterprise Authority's `policy.allow_service_authorities` is `true` or absent (default `true`), the precedence check passes.
+3. Authoritative precedence enforcement per Section 4.2. When the AgentPass was issued by the Service Authority (`request.authority` matches `trust.service_authority.authority`), the precedence check passes only if enterprise discovery for the User email domain does not resolve (no DNS record), or if a discovered Enterprise Authority's `policy.allow_service_authorities` is `true` or absent (default `true`).
 4. AgentPass validation: call Authority Validation Endpoint (Section 5.4) with signed request. If Authority rejects (consumed, expired, invalid, or wrong audience), reject redemption.
 5. Scope validation: verify returned `scope` contains scopes the Service supports. If `scope` contains `"*"`, treat as all scopes the User has access to.
 6. Scope downgrade: if `request.requested_scope` is present, compute the intersection of `requested_scope` and the Authority-approved scope. If the intersection is empty, reject redemption. Otherwise, use the intersection as the effective granted scope.
