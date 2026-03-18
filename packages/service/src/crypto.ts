@@ -77,6 +77,12 @@ export async function fetchJwks(jwksUri: string): Promise<JsonWebKey[]> {
   return jwks.keys;
 }
 
+export async function sha256Base64Url(input: string | Uint8Array): Promise<string> {
+  const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : input;
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return base64urlEncodeBuffer(digest);
+}
+
 // ─── Helpers ───
 
 function getAlg(key: CryptoKey): string {

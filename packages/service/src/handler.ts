@@ -17,6 +17,7 @@ import {
   importSigningKey,
   importVerifyKey,
   fetchJwks,
+  sha256Base64Url,
 } from './crypto.js';
 
 export function createServiceHandler(config: ServiceConfig) {
@@ -245,7 +246,12 @@ export function createServiceHandler(config: ServiceConfig) {
       }
     }
 
-    const harnessProofError = await verifyHarnessProof(validation.cnf, body.harness_proof?.jwt);
+    const harnessProofError = await verifyHarnessProof(
+      request,
+      body.agentpass.value,
+      validation.cnf,
+      body.harness_proof?.jwt,
+    );
     if (harnessProofError) {
       return harnessProofError;
     }
@@ -319,7 +325,12 @@ export function createServiceHandler(config: ServiceConfig) {
       }
     }
 
-    const harnessProofError = await verifyHarnessProof(validation.cnf, body.harness_proof?.jwt);
+    const harnessProofError = await verifyHarnessProof(
+      request,
+      body.agentpass.value,
+      validation.cnf,
+      body.harness_proof?.jwt,
+    );
     if (harnessProofError) {
       return harnessProofError;
     }
@@ -458,6 +469,8 @@ export function createServiceHandler(config: ServiceConfig) {
   }
 
   async function verifyHarnessProof(
+    request: Request,
+    agentpassValue: string,
     cnf: AuthorityValidationResponse['cnf'] | undefined,
     harnessProofJwt: string | undefined,
   ): Promise<Response | null> {
@@ -472,8 +485,57 @@ export function createServiceHandler(config: ServiceConfig) {
     try {
       const pubKey = await importVerifyKey(cnf.jwk);
       const { payload } = await verifyJwt(harnessProofJwt, pubKey);
-      if (payload.aud !== config.origin) {
+
+      const issuer = typeof payload.iss === 'string' ? payload.iss : null;
+      const audience = typeof payload.aud === 'string' ? payload.aud : null;
+      const issuedAt = typeof payload.iat === 'number' ? payload.iat : null;
+      const expiresAt = typeof payload.exp === 'number' ? payload.exp : null;
+      const proofId = typeof payload.jti === 'string' ? payload.jti : null;
+      const proofMethod = typeof payload.htm === 'string' ? payload.htm : null;
+      const proofUrl = typeof payload.htu === 'string' ? payload.htu : null;
+      const agentpassHash = typeof payload.aph === 'string' ? payload.aph : null;
+
+      if (!issuer || !audience || issuedAt === null || expiresAt === null || !proofId || !proofMethod || !proofUrl || !agentpassHash) {
+        return errorResponse(401, 'invalid_proof', 'Harness proof is missing required claims');
+      }
+
+      if (audience !== config.origin) {
         return errorResponse(401, 'invalid_proof', 'Harness proof audience mismatch');
+      }
+
+      if (expiresAt <= Math.floor(Date.now() / 1000)) {
+        return errorResponse(401, 'invalid_proof', 'Harness proof has expired');
+      }
+
+      if (proofMethod !== request.method) {
+        return errorResponse(401, 'invalid_proof', 'Harness proof method mismatch');
+      }
+
+      const expectedProofUrl = `${config.origin}${new URL(request.url).pathname}`;
+      if (proofUrl !== expectedProofUrl) {
+        return errorResponse(401, 'invalid_proof', 'Harness proof URL mismatch');
+      }
+
+      const expectedAgentpassHash = await sha256Base64Url(agentpassValue);
+      if (agentpassHash !== expectedAgentpassHash) {
+        return errorResponse(401, 'invalid_proof', 'Harness proof AgentPass mismatch');
+      }
+
+      if (!config.harnessProofReplayStore) {
+        return errorResponse(
+          500,
+          'replay_protection_unavailable',
+          'Harness proof replay protection is required when cnf is present',
+        );
+      }
+
+      try {
+        const stored = await config.harnessProofReplayStore.checkAndStore(`${issuer}:${proofId}`, new Date(expiresAt * 1000));
+        if (!stored) {
+          return errorResponse(409, 'proof_replayed', 'Harness proof has already been used');
+        }
+      } catch {
+        return errorResponse(500, 'replay_protection_unavailable', 'Harness proof replay protection failed');
       }
     } catch {
       return errorResponse(401, 'invalid_proof', 'Harness proof verification failed');

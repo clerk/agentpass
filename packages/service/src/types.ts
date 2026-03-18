@@ -37,6 +37,8 @@ export interface ServiceConfig {
   authorityConfigOverrides?: Record<string, string>;
   /** Map of public origins to internal origins for Docker/container networking */
   internalOriginOverrides?: Record<string, string>;
+  /** Replay store for holder-binding proofs. Required for cnf-bound redemptions. */
+  harnessProofReplayStore?: HarnessProofReplayStore;
 }
 
 export interface TrustEntry {
@@ -56,6 +58,14 @@ export type ScopeDiscoveryHandler = (params: {
 export interface ScopeItem {
   name: string;
   description?: string;
+}
+
+export interface HarnessProofReplayStore {
+  /**
+   * Atomically stores a proof key until its expiry.
+   * Returns true if stored for the first time, false if the proof was already seen.
+   */
+  checkAndStore(proofKey: string, expiresAt: Date): Promise<boolean>;
 }
 
 // ─── Browser Session Redemption ───

@@ -4,6 +4,7 @@ export type {
   TrustEntry,
   ScopeDiscoveryHandler,
   ScopeItem,
+  HarnessProofReplayStore,
   BrowserSessionRedemptionHandler,
   BearerTokenRedemptionHandler,
   AuthorityResolutionHandler,
@@ -12,6 +13,7 @@ export type {
   DnsResolver,
   AgentPassError,
 } from './types.js';
+export { InMemoryHarnessProofReplayStore } from './replay-store.js';
 export {
   signJwt,
   verifyJwt,
@@ -19,4 +21,5 @@ export {
   importSigningKey,
   importVerifyKey,
   fetchJwks,
+  sha256Base64Url,
 } from './crypto.js';

@@ -121,10 +121,14 @@ When holder binding is used:
    - `iat` (number): issuance time.
    - `exp` (number): expiration time (SHOULD be short-lived).
    - `jti` (string): unique identifier to prevent replay.
+   - `htm` (string): the HTTP method of the redemption request.
+   - `htu` (string): the HTTPS URL of the redemption endpoint.
+   - `aph` (string): the base64url-encoded SHA-256 digest of `request.agentpass.value`.
 
    The proof JWT MUST be signed with the private key corresponding to the `cnf` public key.
+   Harnesses MUST mint a fresh proof JWT for each redemption request and MUST NOT reuse a prior proof across requests, endpoints, or AgentPass values.
 
-3. **At validation:** When the Authority returns `cnf` in the validation response (Section 5.4), the Service MUST require `harness_proof` and verify the `harness_proof` JWT signature against the `cnf.jwk` public key. If `harness_proof` is missing or verification fails, the Service MUST reject the redemption.
+3. **At validation:** When the Authority returns `cnf` in the validation response (Section 5.4), the Service MUST require `harness_proof` and verify the `harness_proof` JWT signature against the `cnf.jwk` public key. The Service MUST verify `aud`, `exp`, `htm`, `htu`, and `aph` against the current redemption request, and MUST reject reuse of the same (`iss`, `jti`) pair until the proof expires. Services deployed across multiple processes or instances MUST use shared replay state for this check. If `harness_proof` is missing or verification fails, the Service MUST reject the redemption.
 
 When holder binding is not used, `harness.cnf` and `harness_proof` are omitted. Services MUST accept redemption requests without `harness_proof` when the Authority validation response does not include `cnf`.
 
@@ -687,7 +691,7 @@ Service MUST perform the following checks during redemption:
 4. AgentPass validation: call Authority Validation Endpoint (Section 5.4) with signed request. If Authority rejects (consumed, expired, invalid, or wrong audience), reject redemption.
 5. Scope validation: verify returned `scope` contains scopes the Service supports. If `scope` contains `"*"`, treat as all scopes the User has access to.
 6. Scope downgrade: if `request.requested_scope` is present, compute the intersection of `requested_scope` and the Authority-approved scope. If the intersection is empty, reject redemption. Otherwise, use the intersection as the effective granted scope.
-7. Harness proof validation when validation response includes `cnf`. If `request.harness_proof` is missing or invalid, reject redemption.
+7. Harness proof validation when validation response includes `cnf`. Service MUST verify the proof signature against `cnf.jwk`, enforce `exp`, verify `htm` and `htu` match the current redemption request, verify `aph` matches `request.agentpass.value`, and reject reuse of the same (`iss`, `jti`) pair until expiration. Services deployed across multiple processes or instances MUST use shared replay state for this check. If `request.harness_proof` is missing or invalid, reject redemption.
 
 Flow-specific sections MAY define additional validation steps beyond these common checks.
 
