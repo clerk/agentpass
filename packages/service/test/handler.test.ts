@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createServiceHandler } from '../src/handler.js';
+import { importSigningKey, signJwt } from '../src/crypto.js';
 import type { ServiceConfig } from '../src/types.js';
 import { importSigningKey, signJwt } from '../src/crypto.js';
 
@@ -43,8 +44,13 @@ const baseConfig: ServiceConfig = {
 describe('Service Handler', () => {
   let handler: ReturnType<typeof createServiceHandler>;
 
-  beforeEach(() => {
-    handler = createServiceHandler(baseConfig);
+  beforeEach(async () => {
+    handler = await createTestHandler();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   afterEach(() => {
@@ -424,6 +430,87 @@ describe('Service Handler', () => {
       const res = await handler(req);
       expect(res.status).toBe(400);
     });
+
+    it('returns 401 when cnf is present but harness proof is missing', async () => {
+      const harnessKeys = await generateEcJwkPair();
+      mockAuthorityValidation({
+        type: 'bearer_token',
+        cnf: { jwk: harnessKeys.publicJwk },
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'bearer_token', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await handler(req);
+      expect(res.status).toBe(401);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('invalid_proof');
+      expect(body.error.message).toContain('required');
+    });
+
+    it('allows redemption without harness proof when cnf is absent', async () => {
+      mockAuthorityValidation({ type: 'bearer_token' });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'bearer_token', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await handler(req);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as { bearer_token: string; scope: string[] };
+      expect(body.bearer_token).toContain('alex@example.com');
+      expect(body.scope).toEqual(['read']);
+    });
+
+    it('accepts a valid harness proof when cnf is present', async () => {
+      const harnessKeys = await generateEcJwkPair();
+      const signingKey = await importSigningKey(harnessKeys.privateJwk);
+      const proofJwt = await signJwt(
+        {
+          iss: 'harness.example.com',
+          aud: 'https://service.example.com',
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 60,
+          jti: 'proof-1',
+        },
+        signingKey,
+        'harness-key-1',
+      );
+
+      mockAuthorityValidation({
+        type: 'bearer_token',
+        cnf: { jwk: harnessKeys.publicJwk },
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'bearer_token', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+          harness_proof: { jwt: proofJwt },
+        }),
+      });
+
+      const res = await handler(req);
+      expect(res.status).toBe(200);
+    });
   });
 
   describe('POST /agentpass-service/agentpass/redeem-browser-session', () => {
@@ -458,6 +545,31 @@ describe('Service Handler', () => {
       const res = await handler(req);
       expect(res.status).toBe(400);
     });
+
+    it('returns 401 when cnf is present but harness proof is missing', async () => {
+      const harnessKeys = await generateEcJwkPair();
+      mockAuthorityValidation({
+        type: 'browser_session',
+        cnf: { jwk: harnessKeys.publicJwk },
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-browser-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'browser_session', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await handler(req);
+      expect(res.status).toBe(401);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('invalid_proof');
+      expect(body.error.message).toContain('required');
+    });
   });
 
   describe('404 for unknown routes', () => {
@@ -468,3 +580,80 @@ describe('Service Handler', () => {
     });
   });
 });
+
+async function createTestHandler(overrides: Partial<ServiceConfig> = {}) {
+  const serviceKeys = await generateEcJwkPair();
+  return createServiceHandler({
+    ...baseConfig,
+    ...overrides,
+    trust: {
+      ...baseConfig.trust,
+      ...overrides.trust,
+    },
+    signingKey: serviceKeys.privateJwk,
+    signingKeyId: overrides.signingKeyId ?? baseConfig.signingKeyId,
+  });
+}
+
+async function generateEcJwkPair(): Promise<{ privateJwk: JsonWebKey; publicJwk: JsonWebKey }> {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify'],
+  );
+
+  return {
+    privateJwk: await crypto.subtle.exportKey('jwk', keyPair.privateKey),
+    publicJwk: await crypto.subtle.exportKey('jwk', keyPair.publicKey),
+  };
+}
+
+function mockAuthorityValidation(validation: {
+  type: 'browser_session' | 'bearer_token';
+  cnf?: { jwk: JsonWebKey };
+}) {
+  const validationResponse = {
+    authorization_id: 'authz_123',
+    user: { email: 'alex@example.com' },
+    agent: { id: 'agent_123' },
+    scope: ['read'],
+    ...validation,
+  };
+
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+
+    if (url === 'https://authority.example.com/ap') {
+      return new Response(JSON.stringify({
+        authority: 'https://authority.example.com',
+        trust_mode: 'federated',
+        jwks_uri: 'https://authority.example.com/jwks.json',
+        endpoints: {
+          issuance: 'https://authority.example.com/issue',
+          issuance_status: 'https://authority.example.com/issuance-status',
+          validate: 'https://authority.example.com/validate',
+          authorization_check: 'https://authority.example.com/authorization-check',
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url === 'https://authority.example.com/validate') {
+      return new Response(JSON.stringify(validationResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}

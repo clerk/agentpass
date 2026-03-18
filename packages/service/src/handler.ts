@@ -245,17 +245,9 @@ export function createServiceHandler(config: ServiceConfig) {
       }
     }
 
-    // Verify harness proof if cnf is present
-    if (validation.cnf && body.harness_proof?.jwt) {
-      try {
-        const pubKey = await importVerifyKey(validation.cnf.jwk);
-        const { payload } = await verifyJwt(body.harness_proof.jwt, pubKey);
-        if (payload.aud !== config.origin) {
-          return errorResponse(401, 'invalid_proof', 'Harness proof audience mismatch');
-        }
-      } catch {
-        return errorResponse(401, 'invalid_proof', 'Harness proof verification failed');
-      }
+    const harnessProofError = await verifyHarnessProof(validation.cnf, body.harness_proof?.jwt);
+    if (harnessProofError) {
+      return harnessProofError;
     }
 
     // Call implementer's handler
@@ -327,16 +319,9 @@ export function createServiceHandler(config: ServiceConfig) {
       }
     }
 
-    if (validation.cnf && body.harness_proof?.jwt) {
-      try {
-        const pubKey = await importVerifyKey(validation.cnf.jwk);
-        const { payload } = await verifyJwt(body.harness_proof.jwt, pubKey);
-        if (payload.aud !== config.origin) {
-          return errorResponse(401, 'invalid_proof', 'Harness proof audience mismatch');
-        }
-      } catch {
-        return errorResponse(401, 'invalid_proof', 'Harness proof verification failed');
-      }
+    const harnessProofError = await verifyHarnessProof(validation.cnf, body.harness_proof?.jwt);
+    if (harnessProofError) {
+      return harnessProofError;
     }
 
     try {
@@ -470,6 +455,31 @@ export function createServiceHandler(config: ServiceConfig) {
       code: 'no_authority',
       message: 'No enterprise authority and no trusted federated options',
     };
+  }
+
+  async function verifyHarnessProof(
+    cnf: AuthorityValidationResponse['cnf'] | undefined,
+    harnessProofJwt: string | undefined,
+  ): Promise<Response | null> {
+    if (!cnf) {
+      return null;
+    }
+
+    if (!harnessProofJwt) {
+      return errorResponse(401, 'invalid_proof', 'Harness proof is required when cnf is present');
+    }
+
+    try {
+      const pubKey = await importVerifyKey(cnf.jwk);
+      const { payload } = await verifyJwt(harnessProofJwt, pubKey);
+      if (payload.aud !== config.origin) {
+        return errorResponse(401, 'invalid_proof', 'Harness proof audience mismatch');
+      }
+    } catch {
+      return errorResponse(401, 'invalid_proof', 'Harness proof verification failed');
+    }
+
+    return null;
   }
 
   async function resolveRequestedAuthority(

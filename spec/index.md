@@ -124,7 +124,7 @@ When holder binding is used:
 
    The proof JWT MUST be signed with the private key corresponding to the `cnf` public key.
 
-3. **At validation:** When the Authority returns `cnf` in the validation response (Section 5.4), the Service MUST verify the `harness_proof` JWT signature against the `cnf.jwk` public key. If verification fails, the Service MUST reject the redemption.
+3. **At validation:** When the Authority returns `cnf` in the validation response (Section 5.4), the Service MUST require `harness_proof` and verify the `harness_proof` JWT signature against the `cnf.jwk` public key. If `harness_proof` is missing or verification fails, the Service MUST reject the redemption.
 
 When holder binding is not used, `harness.cnf` and `harness_proof` are omitted. Services MUST accept redemption requests without `harness_proof` when the Authority validation response does not include `cnf`.
 
@@ -343,7 +343,7 @@ Harness MUST include:
 - `request.agentpass` from approved issuance response
 - `request.authority` — the Authority identifier (`authority` field from `GET {authority_configuration_url}`)
 
-Harness SHOULD include:
+Harness MUST include:
 
 - `request.harness_proof` when proof-of-possession is required
 
@@ -383,7 +383,7 @@ Harness MUST include:
 - `request.authority` — the Authority identifier (`authority` field from `GET {authority_configuration_url}`)
 - `request.user.email`
 
-Harness SHOULD include:
+Harness MUST include:
 
 - `request.harness_proof` when proof-of-possession is required
 
@@ -687,7 +687,7 @@ Service MUST perform the following checks during redemption:
 4. AgentPass validation: call Authority Validation Endpoint (Section 5.4) with signed request. If Authority rejects (consumed, expired, invalid, or wrong audience), reject redemption.
 5. Scope validation: verify returned `scope` contains scopes the Service supports. If `scope` contains `"*"`, treat as all scopes the User has access to.
 6. Scope downgrade: if `request.requested_scope` is present, compute the intersection of `requested_scope` and the Authority-approved scope. If the intersection is empty, reject redemption. Otherwise, use the intersection as the effective granted scope.
-7. Harness proof validation when validation response includes `cnf`.
+7. Harness proof validation when validation response includes `cnf`. If `request.harness_proof` is missing or invalid, reject redemption.
 
 Flow-specific sections MAY define additional validation steps beyond these common checks.
 
@@ -726,7 +726,7 @@ Service MUST require:
 - `request.authority`
 - `request.user.email`
 
-Service SHOULD accept:
+Service MUST accept:
 
 - `request.harness_proof`
 
@@ -842,7 +842,7 @@ Service MUST require:
 - `request.authority`
 - `request.user.email`
 
-Service SHOULD accept:
+Service MUST accept:
 
 - `request.harness_proof`
 
