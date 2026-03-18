@@ -302,9 +302,10 @@ export function createServiceHandler(config: ServiceConfig) {
 
       return json({
         initialization_url: result.initialization_url,
+        initialization_request: result.initialization_request,
         expires_at: result.expires_at,
         one_time: true,
-      });
+      }, 200, { 'Cache-Control': 'no-store' });
     } catch (e) {
       return errorResponse(500, 'redemption_error', (e as Error).message);
     }

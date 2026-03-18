@@ -122,7 +122,7 @@ curl -s -X POST {redeem_browser_session_url} \
 curl -H "Authorization: Bearer {bearer_token}" {service_api_url}
 ```
 
-**Browser session:** Open the `initialization_url` in the user's browser. Note this URL is single-use and short-lived.
+**Browser session:** If the response includes `initialization_request.method = "POST"`, submit a browser form POST to `initialization_url` using the provided `initialization_request.form_fields`. Otherwise, open the `initialization_url` in the user's browser directly. Treat the bootstrap flow as single-use and short-lived, and do not retry or share it.
 
 ## Important Notes
 
