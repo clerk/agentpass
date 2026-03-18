@@ -6,6 +6,8 @@
 import type {
   ServiceConfig,
   AuthorityValidationResponse,
+  AuthorityResolutionResult,
+  TrustEntry,
   AgentPassError,
 } from './types.js';
 import {
@@ -20,6 +22,23 @@ import {
 export function createServiceHandler(config: ServiceConfig) {
   const basePath = (config.basePath ?? '/agentpass-service').replace(/\/$/, '');
   const jwksUri = `${config.origin}${basePath}/jwks.json`;
+
+  type AuthorityResolutionDecision =
+    | {
+      ok: true;
+      response: AuthorityResolutionResult;
+      authorities: ResolvedAuthority[];
+    }
+    | {
+      ok: false;
+      status: number;
+      code: string;
+      message: string;
+    };
+
+  interface ResolvedAuthority extends TrustEntry {
+    source: 'enterprise' | 'service' | 'federated';
+  }
 
   return async function handleRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -114,89 +133,30 @@ export function createServiceHandler(config: ServiceConfig) {
       return errorResponse(400, 'missing_field', 'user.email is required');
     }
 
-    // If custom handler provided, use it
-    if (config.onResolveAuthority) {
-      try {
-        const result = await config.onResolveAuthority({ userEmail: body.user.email });
-        return json(result);
-      } catch (e) {
-        return errorResponse(500, 'resolution_error', (e as Error).message);
-      }
+    const decision = await resolveAuthoritiesForUserEmail(body.user.email);
+    if (!decision.ok) {
+      return errorResponse(decision.status, decision.code, decision.message);
     }
 
-    // Default resolution algorithm per spec Section 4.2
-    const emailDomain = body.user.email.split('@')[1];
-    if (!emailDomain) {
-      return errorResponse(400, 'invalid_email', 'Invalid email address');
-    }
-
-    // Step 1: Try enterprise discovery via DNS
-    const dnsResult = await discoverEnterprise(emailDomain);
-
-    if (dnsResult === 'none') {
-      // Explicitly disabled — reject
-      return errorResponse(403, 'delegation_disabled', 'Delegation is explicitly disabled for this domain');
-    }
-
-    if (dnsResult) {
-      // Enterprise Authority found
-      try {
-        const authConfig = await fetchAuthorityConfig(dnsResult);
-
-        // Check if Service Authority is allowed
-        if (config.trust.serviceAuthority) {
-          const allowServiceAuth = authConfig.policy?.allow_service_authorities ?? true;
-          if (allowServiceAuth) {
-            return json({ service_authority: config.trust.serviceAuthority });
-          }
-        }
-
-        return json({
-          enterprise_authority: {
-            authority: authConfig.authority,
-            authority_configuration_url: dnsResult,
-          },
-        });
-      } catch {
-        // Fetch/validation failure — reject per spec
-        return errorResponse(502, 'authority_fetch_failed', 'Failed to fetch or validate Enterprise Authority configuration');
-      }
-    }
-
-    // No DNS record — prefer Service Authority when configured
-    if (config.trust.serviceAuthority) {
-      return json({
-        service_authority: config.trust.serviceAuthority,
-      });
-    }
-
-    // Otherwise return federated authorities
-    if (config.trust.trustedFederatedAuthorities && config.trust.trustedFederatedAuthorities.length > 0) {
-      return json({
-        trusted_federated_authorities: config.trust.trustedFederatedAuthorities,
-      });
-    }
-
-    return errorResponse(404, 'no_authority', 'No enterprise authority and no trusted federated options');
+    return json(decision.response);
   }
 
   async function handleAvailableScopes(request: Request): Promise<Response> {
-    // Verify Authority assertion
     const authHeader = request.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
       return errorResponse(401, 'missing_assertion', 'Authorization header with Bearer assertion required');
     }
 
+    const assertionJwt = authHeader.slice(7);
+    let assertionPayload: Record<string, unknown>;
     try {
-      const payload = decodeJwtPayload(authHeader.slice(7));
-      if (payload.aud !== config.origin) {
+      assertionPayload = decodeJwtPayload(assertionJwt);
+      if (assertionPayload.aud !== config.origin) {
         return errorResponse(401, 'invalid_assertion', 'Assertion audience does not match this service');
       }
-      if (payload.exp && (payload.exp as number) < Math.floor(Date.now() / 1000)) {
+      if (assertionPayload.exp && (assertionPayload.exp as number) < Math.floor(Date.now() / 1000)) {
         return errorResponse(401, 'expired_assertion', 'Assertion has expired');
       }
-      // Verify Authority signature
-      await verifyAuthorityAssertion(authHeader.slice(7), payload.iss as string);
     } catch (e) {
       return errorResponse(401, 'invalid_assertion', `Assertion verification failed: ${(e as Error).message}`);
     }
@@ -210,6 +170,15 @@ export function createServiceHandler(config: ServiceConfig) {
 
     if (!body.user?.email || !body.agent?.id) {
       return errorResponse(400, 'missing_field', 'user.email and agent.id are required');
+    }
+
+    const resolvedAuthority = await resolveRequestedAuthority(body.user.email, assertionPayload.iss as string);
+    if ('error' in resolvedAuthority) return resolvedAuthority.error;
+
+    try {
+      await verifyAuthorityAssertion(assertionJwt, resolvedAuthority);
+    } catch (e) {
+      return errorResponse(401, 'invalid_assertion', `Assertion verification failed: ${(e as Error).message}`);
     }
 
     try {
@@ -250,16 +219,17 @@ export function createServiceHandler(config: ServiceConfig) {
     if (!body.authority) {
       return errorResponse(400, 'missing_field', 'authority is required');
     }
-
-    // Verify authority is trusted
-    if (!isTrustedAuthority(body.authority)) {
-      return errorResponse(403, 'untrusted_authority', 'Authority is not trusted by this service');
+    if (!body.user?.email) {
+      return errorResponse(400, 'missing_field', 'user.email is required');
     }
+
+    const resolvedAuthority = await resolveRequestedAuthority(body.user.email, body.authority);
+    if ('error' in resolvedAuthority) return resolvedAuthority.error;
 
     // Validate AgentPass with Authority
     let validation: AuthorityValidationResponse;
     try {
-      validation = await validateAgentPassWithAuthority(body.authority, body.agentpass.value);
+      validation = await validateAgentPassWithAuthority(resolvedAuthority, body.agentpass.value);
     } catch (e) {
       return errorResponse(422, 'validation_failed', (e as Error).message);
     }
@@ -333,14 +303,16 @@ export function createServiceHandler(config: ServiceConfig) {
     if (!body.authority) {
       return errorResponse(400, 'missing_field', 'authority is required');
     }
-
-    if (!isTrustedAuthority(body.authority)) {
-      return errorResponse(403, 'untrusted_authority', 'Authority is not trusted by this service');
+    if (!body.user?.email) {
+      return errorResponse(400, 'missing_field', 'user.email is required');
     }
+
+    const resolvedAuthority = await resolveRequestedAuthority(body.user.email, body.authority);
+    if ('error' in resolvedAuthority) return resolvedAuthority.error;
 
     let validation: AuthorityValidationResponse;
     try {
-      validation = await validateAgentPassWithAuthority(body.authority, body.agentpass.value);
+      validation = await validateAgentPassWithAuthority(resolvedAuthority, body.agentpass.value);
     } catch (e) {
       return errorResponse(422, 'validation_failed', (e as Error).message);
     }
@@ -397,31 +369,150 @@ export function createServiceHandler(config: ServiceConfig) {
     return url;
   }
 
-  function isTrustedAuthority(authority: string): boolean {
-    // Check service authority
-    if (config.trust.serviceAuthority?.authority === authority) return true;
-    // Check federated authorities
-    if (config.trust.trustedFederatedAuthorities?.some(a => a.authority === authority)) return true;
-    return false;
+  async function resolveAuthoritiesForUserEmail(userEmail: string): Promise<AuthorityResolutionDecision> {
+    if (config.onResolveAuthority) {
+      try {
+        const response = await config.onResolveAuthority({ userEmail });
+        return {
+          ok: true,
+          response,
+          authorities: normalizeAuthorityResolution(response),
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          status: 500,
+          code: 'resolution_error',
+          message: (e as Error).message,
+        };
+      }
+    }
+
+    const emailDomain = userEmail.split('@')[1];
+    if (!emailDomain) {
+      return {
+        ok: false,
+        status: 400,
+        code: 'invalid_email',
+        message: 'Invalid email address',
+      };
+    }
+
+    const dnsResult = await discoverEnterprise(emailDomain);
+    if (dnsResult === 'none') {
+      return {
+        ok: false,
+        status: 403,
+        code: 'delegation_disabled',
+        message: 'Delegation is explicitly disabled for this domain',
+      };
+    }
+
+    if (dnsResult) {
+      try {
+        const authConfig = await fetchAuthorityConfig(resolveUrl(dnsResult));
+        if (config.trust.serviceAuthority) {
+          const allowServiceAuth = authConfig.policy?.allow_service_authorities ?? true;
+          if (allowServiceAuth) {
+            const response = { service_authority: config.trust.serviceAuthority } satisfies AuthorityResolutionResult;
+            return {
+              ok: true,
+              response,
+              authorities: normalizeAuthorityResolution(response),
+            };
+          }
+        }
+
+        const response = {
+          enterprise_authority: {
+            authority: authConfig.authority,
+            authority_configuration_url: dnsResult,
+          },
+        } satisfies AuthorityResolutionResult;
+        return {
+          ok: true,
+          response,
+          authorities: normalizeAuthorityResolution(response),
+        };
+      } catch {
+        return {
+          ok: false,
+          status: 502,
+          code: 'authority_fetch_failed',
+          message: 'Failed to fetch or validate Enterprise Authority configuration',
+        };
+      }
+    }
+
+    if (config.trust.serviceAuthority) {
+      const response = { service_authority: config.trust.serviceAuthority } satisfies AuthorityResolutionResult;
+      return {
+        ok: true,
+        response,
+        authorities: normalizeAuthorityResolution(response),
+      };
+    }
+
+    if (config.trust.trustedFederatedAuthorities && config.trust.trustedFederatedAuthorities.length > 0) {
+      const response = {
+        trusted_federated_authorities: config.trust.trustedFederatedAuthorities,
+      } satisfies AuthorityResolutionResult;
+      return {
+        ok: true,
+        response,
+        authorities: normalizeAuthorityResolution(response),
+      };
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      code: 'no_authority',
+      message: 'No enterprise authority and no trusted federated options',
+    };
+  }
+
+  async function resolveRequestedAuthority(
+    userEmail: string,
+    requestedAuthority: string,
+  ): Promise<ResolvedAuthority | { error: Response }> {
+    const decision = await resolveAuthoritiesForUserEmail(userEmail);
+    if (!decision.ok) {
+      return { error: errorResponse(decision.status, decision.code, decision.message) };
+    }
+
+    const matchedAuthority = decision.authorities.find(authority => authority.authority === requestedAuthority);
+    if (!matchedAuthority) {
+      return {
+        error: errorResponse(
+          403,
+          'authority_precedence_violation',
+          'Requested authority is not permitted for this user',
+        ),
+      };
+    }
+
+    return matchedAuthority;
+  }
+
+  function normalizeAuthorityResolution(result: AuthorityResolutionResult): ResolvedAuthority[] {
+    if ('enterprise_authority' in result) {
+      return [{ ...result.enterprise_authority, source: 'enterprise' }];
+    }
+    if ('service_authority' in result) {
+      return [{ ...result.service_authority, source: 'service' }];
+    }
+    return result.trusted_federated_authorities.map(authority => ({
+      ...authority,
+      source: 'federated' as const,
+    }));
   }
 
   async function validateAgentPassWithAuthority(
-    authority: string,
+    authority: ResolvedAuthority,
     agentpassValue: string,
   ): Promise<AuthorityValidationResponse> {
-    // Find the authority config URL
-    let configUrl: string | undefined;
-    if (config.trust.serviceAuthority?.authority === authority) {
-      configUrl = config.trust.serviceAuthority.authority_configuration_url;
-    }
-    if (!configUrl) {
-      const fed = config.trust.trustedFederatedAuthorities?.find(a => a.authority === authority);
-      if (fed) configUrl = fed.authority_configuration_url;
-    }
-    if (!configUrl) throw new Error('Authority not found in trust configuration');
-
-    // Fetch authority configuration
-    const authConfig = await fetchAuthorityConfig(resolveUrl(configUrl));
+    const authConfig = await fetchAuthorityConfig(resolveUrl(authority.authority_configuration_url));
     const validateUrl = authConfig.endpoints.validate;
 
     // Create Service assertion JWT
@@ -429,7 +520,7 @@ export function createServiceHandler(config: ServiceConfig) {
     const assertion = await signJwt(
       {
         iss: config.origin,
-        aud: authority,
+        aud: authority.authority,
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 60,
       },
@@ -454,22 +545,8 @@ export function createServiceHandler(config: ServiceConfig) {
     return response.json() as Promise<AuthorityValidationResponse>;
   }
 
-  async function verifyAuthorityAssertion(jwt: string, authorityId: string): Promise<void> {
-    // Find the authority's config URL from trust config
-    let configUrl: string | undefined;
-    if (config.trust.serviceAuthority?.authority === authorityId) {
-      configUrl = config.trust.serviceAuthority.authority_configuration_url;
-    }
-    if (!configUrl) {
-      const fed = config.trust.trustedFederatedAuthorities?.find(a => a.authority === authorityId);
-      if (fed) configUrl = fed.authority_configuration_url;
-    }
-
-    if (!configUrl) {
-      throw new Error('Authority not found in trust configuration');
-    }
-
-    const authConfig = await fetchAuthorityConfig(resolveUrl(configUrl));
+  async function verifyAuthorityAssertion(jwt: string, authority: ResolvedAuthority): Promise<void> {
+    const authConfig = await fetchAuthorityConfig(resolveUrl(authority.authority_configuration_url));
     const authorityJwksUri = authConfig.jwks_uri;
 
     const keys = await fetchJwks(resolveUrl(authorityJwksUri));
