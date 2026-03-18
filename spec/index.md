@@ -1258,6 +1258,8 @@ Schema: `authority-authorization-check` (Appendix A).
 
 Service MUST authenticate using a signed JWT assertion with its keys (from Service `jwks_uri`), following the same pattern as the Validation Endpoint (Section 5.4).
 
+Authority MUST reject requests with missing, expired, or invalid assertions.
+
 **Request**
 
 Service MUST send a JSON body containing:
@@ -1270,7 +1272,7 @@ On success (delegation still active), Authority MUST return JSON conforming to `
 
 - `scope` (array of strings): current approved scopes for this delegation.
 
-A successful response indicates the delegation is still active. Services MAY use the returned `scope` to detect scope changes and adjust enforcement accordingly.
+A successful response indicates the delegation is still active for the requesting Service. Authorities MUST treat `authorization_id` as scoped to the Service that originally redeemed the AgentPass and MUST reject requests from other Services as if the `authorization_id` were unknown. Services MAY use the returned `scope` to detect scope changes and adjust enforcement accordingly.
 
 Services MAY use a successful response to re-issue bearer tokens for the delegation without requiring the Harness to repeat the full issuance flow.
 
@@ -1280,7 +1282,7 @@ Suggested status classes:
 
 - `400` malformed request
 - `401` invalid Service assertion
-- `404` unknown `authorization_id` or delegation revoked — Service MUST invalidate any sessions or tokens associated with this delegation
+- `404` unknown `authorization_id`, delegation revoked, or delegation not issued for the requesting Service — Service MUST invalidate any sessions or tokens associated with this delegation
 
 #### Error Responses
 

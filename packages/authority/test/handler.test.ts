@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createAuthorityHandler } from '../src/handler.js';
+import { importSigningKey, signJwt } from '../src/crypto.js';
 import { MemoryStorage } from '../src/storage.js';
-import type { AuthorityConfig } from '../src/types.js';
+import type { AuthorityConfig, IssuanceRecord } from '../src/types.js';
 
 // Test EC key pair (P-256)
 const testPrivateKey: JsonWebKey = {
@@ -44,6 +45,11 @@ describe('Authority Handler', () => {
   beforeEach(() => {
     storage = new MemoryStorage();
     handler = createAuthorityHandler(testConfig, storage);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('GET /agentpass-authority/ap (configuration)', () => {
@@ -243,6 +249,96 @@ describe('Authority Handler', () => {
     });
   });
 
+  describe('POST /agentpass-authority/authorization-check', () => {
+    it('rejects expired service assertions', async () => {
+      const serviceKeys = await generateEcJwkPair();
+      mockServiceDiscovery({
+        'https://service.example.com': serviceKeys.publicJwk,
+      });
+
+      await storage.createIssuanceRecord(makeApprovedRecord({
+        authorizationId: 'authz_test',
+      }));
+
+      const authorityHandler = createAuthorityHandler(
+        {
+          ...testConfig,
+          serviceConfigOverrides: {
+            'https://service.example.com': 'https://service.example.com/config.json',
+          },
+        },
+        storage,
+      );
+
+      const req = new Request('https://authority.example.com/agentpass-authority/authorization-check', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await signServiceAssertion(serviceKeys.privateJwk, 'https://service.example.com', -60)}`,
+        },
+        body: JSON.stringify({ authorization_id: 'authz_test' }),
+      });
+
+      const res = await authorityHandler(req);
+      expect(res.status).toBe(401);
+    });
+
+    it('treats authorization_id as scoped to the original service', async () => {
+      const allowedService = await generateEcJwkPair();
+      const wrongService = await generateEcJwkPair();
+      mockServiceDiscovery({
+        'https://service.example.com': allowedService.publicJwk,
+        'https://evil.example.com': wrongService.publicJwk,
+      });
+
+      await storage.createIssuanceRecord(makeApprovedRecord({
+        authorizationId: 'authz_test',
+        request: {
+          ...makeIssuanceBody(),
+          service: { origin: 'https://service.example.com' },
+        },
+      }));
+
+      const authorityHandler = createAuthorityHandler(
+        {
+          ...testConfig,
+          serviceConfigOverrides: {
+            'https://service.example.com': 'https://service.example.com/config.json',
+            'https://evil.example.com': 'https://evil.example.com/config.json',
+          },
+        },
+        storage,
+      );
+
+      const wrongReq = new Request('https://authority.example.com/agentpass-authority/authorization-check', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await signServiceAssertion(wrongService.privateJwk, 'https://evil.example.com')}`,
+        },
+        body: JSON.stringify({ authorization_id: 'authz_test' }),
+      });
+
+      const wrongRes = await authorityHandler(wrongReq);
+      expect(wrongRes.status).toBe(404);
+
+      const rightReq = new Request('https://authority.example.com/agentpass-authority/authorization-check', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await signServiceAssertion(allowedService.privateJwk, 'https://service.example.com')}`,
+        },
+        body: JSON.stringify({ authorization_id: 'authz_test' }),
+      });
+
+      const rightRes = await authorityHandler(rightReq);
+      expect(rightRes.status).toBe(200);
+
+      const body = await rightRes.json() as { scope: string[] };
+      expect(body.scope).toEqual(['read']);
+    });
+  });
+
   describe('404 for unknown routes', () => {
     it('returns 404', async () => {
       const req = new Request('https://authority.example.com/unknown');
@@ -251,3 +347,82 @@ describe('Authority Handler', () => {
     });
   });
 });
+
+function makeApprovedRecord(overrides: Partial<IssuanceRecord> = {}): IssuanceRecord {
+  return {
+    id: 'req_test',
+    status: 'approved',
+    type: 'bearer_token',
+    request: makeIssuanceBody(),
+    scope: ['read'],
+    agentpass: { type: 'bearer_token', value: 'ap_default' },
+    authorizationId: 'authz_default',
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 300000).toISOString(),
+    ...overrides,
+  };
+}
+
+async function generateEcJwkPair(): Promise<{ privateJwk: JsonWebKey; publicJwk: JsonWebKey }> {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify'],
+  );
+
+  return {
+    privateJwk: await crypto.subtle.exportKey('jwk', keyPair.privateKey),
+    publicJwk: await crypto.subtle.exportKey('jwk', keyPair.publicKey),
+  };
+}
+
+function mockServiceDiscovery(servicePublicJwks: Record<string, JsonWebKey>) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+
+    for (const [origin, jwk] of Object.entries(servicePublicJwks)) {
+      if (url === `${origin}/config.json`) {
+        return new Response(JSON.stringify({ jwks_uri: `${origin}/jwks.json` }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url === `${origin}/jwks.json`) {
+        return new Response(JSON.stringify({ keys: [jwk] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+async function signServiceAssertion(
+  privateJwk: JsonWebKey,
+  serviceOrigin: string,
+  expOffsetSeconds: number = 60,
+): Promise<string> {
+  const signingKey = await importSigningKey(privateJwk);
+  const now = Math.floor(Date.now() / 1000);
+
+  return signJwt(
+    {
+      iss: serviceOrigin,
+      aud: 'https://authority.example.com',
+      iat: now,
+      exp: now + expOffsetSeconds,
+    },
+    signingKey,
+    'service-key-1',
+  );
+}
