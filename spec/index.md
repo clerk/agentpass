@@ -673,7 +673,7 @@ Service sends:
 
 **Validation response**
 
-The Authority returns delegation details including `authorization_id`, `user.email`, `agent.id`, `scope`, and optional fields for holder binding and task context. See Section 5.4.1 for the complete response schema.
+The Authority returns delegation details including `authorization_id`, `authorization_expires_at`, `user.email`, `agent.id`, `scope`, and optional fields for holder binding and task context. See Section 5.4.1 for the complete response schema.
 
 The Authority atomically enforces single-use semantics. If the AgentPass has already been consumed, is expired, or is otherwise invalid, the Authority rejects the request.
 
@@ -696,6 +696,8 @@ If any check fails, Service MUST reject the redemption.
 #### Continuous Delegation Validation
 
 Service SHOULD verify that the delegation is still active periodically by calling the Authorization Check Endpoint (Section 5.5) with the `authorization_id` obtained during AgentPass validation. Services MAY cache successful authorization check results briefly to reduce per-request latency. Revocation takes effect within the cache TTL window.
+
+Services MUST treat `authorization_expires_at` returned by the Authority as the absolute upper bound for the delegation. Services MUST NOT keep browser sessions, bearer tokens, or any other delegated credentials valid beyond that timestamp.
 
 If the Authority returns `404` (delegation revoked or expired), Service MUST invalidate any sessions or tokens associated with the delegation and discard any cached authorization check result for that `authorization_id`.
 
@@ -758,6 +760,8 @@ Service SHOULD return:
 - bound to the approved AgentPass redemption context
 
 Service MUST generate initialization state atomically with single-use marking to prevent replay races.
+
+Any browser session established through this flow MUST expire no later than the `authorization_expires_at` returned by the Authority during AgentPass validation or a subsequent authorization check.
 
 #### Browser Session Initialization Endpoint
 
@@ -868,6 +872,8 @@ The bearer token format is determined by the Service (JWT, opaque, etc.). Harnes
 The granted scope MUST NOT exceed the scope returned by the Authority validation response.
 
 Service MAY re-issue a bearer token for an active delegation based on a successful authorization check (Section 5.5), without requiring the Harness to repeat the full issuance flow.
+
+Any bearer token issued or re-issued by the Service MUST expire no later than the `authorization_expires_at` returned by the Authority during AgentPass validation or a subsequent authorization check.
 
 #### Error Handling
 
@@ -1208,6 +1214,7 @@ Authority MUST:
 On success, Authority MUST return JSON conforming to `authority-validate` response schema, including:
 
 - `authorization_id` (string): identifier for this delegation, used for scope refresh queries (Section 5.5).
+- `authorization_expires_at` (string): absolute expiration time for this delegation. Services MUST NOT keep delegated credentials valid beyond this timestamp.
 - `user.email` (string): User email address.
 - `agent.id` (string): Agent identifier, attested by the Authority.
 - `scope` (array of strings): approved scopes.
@@ -1269,8 +1276,9 @@ Service MUST send a JSON body containing:
 On success (delegation still active), Authority MUST return JSON conforming to `authority-authorization-check` response schema, including:
 
 - `scope` (array of strings): current approved scopes for this delegation.
+- `authorization_expires_at` (string): current absolute expiration time for this delegation.
 
-A successful response indicates the delegation is still active. Services MAY use the returned `scope` to detect scope changes and adjust enforcement accordingly.
+A successful response indicates the delegation is still active. Services MAY use the returned `scope` to detect scope changes and adjust enforcement accordingly. Services MUST also enforce the returned `authorization_expires_at` as the maximum lifetime of any delegated credentials.
 
 Services MAY use a successful response to re-issue bearer tokens for the delegation without requiring the Harness to repeat the full issuance flow.
 
@@ -2086,6 +2094,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
       "type": "object",
       "required": [
         "authorization_id",
+        "authorization_expires_at",
         "user",
         "agent",
         "scope",
@@ -2095,6 +2104,10 @@ All endpoints defined in this specification SHOULD return structured JSON error 
         "authorization_id": {
           "type": "string",
           "minLength": 1
+        },
+        "authorization_expires_at": {
+          "type": "string",
+          "format": "date-time"
         },
         "user": {
           "type": "object",
@@ -2187,11 +2200,15 @@ All endpoints defined in this specification SHOULD return structured JSON error 
     },
     "response": {
       "type": "object",
-      "required": ["scope"],
+      "required": ["scope", "authorization_expires_at"],
       "properties": {
         "scope": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "authorization_expires_at": {
+          "type": "string",
+          "format": "date-time"
         }
       },
       "additionalProperties": true
@@ -2381,6 +2398,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
   },
   "response": {
     "authorization_id": "authz_a1b2c3d4e5f6",
+    "authorization_expires_at": "2025-01-15T13:00:00Z",
     "user": { "email": "alex@example.com" },
     "agent": { "id": "build-bot-7f2c" },
     "scope": ["dashboard:view", "tickets:read"],
@@ -2403,7 +2421,8 @@ All endpoints defined in this specification SHOULD return structured JSON error 
     "authorization_id": "authz_a1b2c3d4e5f6"
   },
   "response": {
-    "scope": ["dashboard:view", "tickets:read", "tickets:comment"]
+    "scope": ["dashboard:view", "tickets:read", "tickets:comment"],
+    "authorization_expires_at": "2025-01-15T13:00:00Z"
   }
 }
 ```
