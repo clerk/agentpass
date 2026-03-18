@@ -70,6 +70,10 @@ export type BrowserSessionRedemptionHandler = (params: {
   authorizationId: string;
 }) => Promise<{
   initialization_url: string;
+  initialization_request?: {
+    method?: 'GET' | 'POST';
+    form_fields?: Record<string, string>;
+  };
   expires_at?: string;
 }>;
 

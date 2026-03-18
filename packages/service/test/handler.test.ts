@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createServiceHandler } from '../src/handler.js';
 import type { ServiceConfig } from '../src/types.js';
 
@@ -27,8 +27,14 @@ const baseConfig: ServiceConfig = {
     { name: 'read', description: 'Read access' },
     { name: 'write', description: 'Write access' },
   ],
-  onRedeemBrowserSession: async (params) => ({
-    initialization_url: `https://service.example.com/init?user=${encodeURIComponent(params.userEmail)}`,
+  onRedeemBrowserSession: async () => ({
+    initialization_url: 'https://service.example.com/init',
+    initialization_request: {
+      method: 'POST',
+      form_fields: {
+        initialization_token: 'tok_123',
+      },
+    },
     expires_at: new Date(Date.now() + 300000).toISOString(),
   }),
   onRedeemBearerToken: async (params) => ({
@@ -200,6 +206,84 @@ describe('Service Handler', () => {
 
       const res = await handler(req);
       expect(res.status).toBe(400);
+    });
+
+    it('passes through initialization_request when browser-session redemption succeeds', async () => {
+      const keyPair = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign', 'verify'],
+      );
+      const servicePrivateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+      const successHandler = createServiceHandler({
+        ...baseConfig,
+        signingKey: servicePrivateJwk,
+      });
+
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+        if (url === 'https://authority.example.com/ap') {
+          return new Response(JSON.stringify({
+            authority: 'https://authority.example.com',
+            trust_mode: 'federated',
+            jwks_uri: 'https://authority.example.com/jwks.json',
+            endpoints: {
+              issuance: 'https://authority.example.com/issue',
+              issuance_status: 'https://authority.example.com/issuance-status',
+              validate: 'https://authority.example.com/validate',
+              authorization_check: 'https://authority.example.com/authorization-check',
+            },
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (url === 'https://authority.example.com/validate') {
+          return new Response(JSON.stringify({
+            authorization_id: 'authz_123',
+            user: { email: 'alex@example.com' },
+            agent: { id: 'agent_123' },
+            scope: ['read'],
+            type: 'browser_session',
+            destination_url: 'https://service.example.com/dashboard',
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        throw new Error(`Unexpected fetch to ${url}`);
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-browser-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'browser_session', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await successHandler(req);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+
+      const body = await res.json() as {
+        initialization_url: string;
+        initialization_request?: { method?: string; form_fields?: Record<string, string> };
+        one_time: boolean;
+      };
+      expect(body.initialization_url).toBe('https://service.example.com/init');
+      expect(body.initialization_request?.method).toBe('POST');
+      expect(body.initialization_request?.form_fields?.initialization_token).toBe('tok_123');
+      expect(body.one_time).toBe(true);
     });
   });
 

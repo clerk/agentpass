@@ -355,13 +355,16 @@ Harness MUST include `request.user.email` for enterprise precedence domain deriv
 
 #### 3.3.2. Initialize Browser Session [#s-3-3-2]
 
-If `POST {service_redeem_browser_session_url}` succeeds, Harness receives `initialization_url`.
+If `POST {service_redeem_browser_session_url}` succeeds, Harness receives `initialization_url` and MAY also receive `initialization_request`.
 
 Harness MUST:
 
-- treat `initialization_url` as single-use and short-lived
-- load it directly in emulated browser
+- treat the browser-session initialization state as single-use and short-lived
 - avoid prefetching, retries, or secondary sharing of URL
+
+If `initialization_request.method = "POST"`, Harness MUST submit a browser form POST to `initialization_url` using the provided `initialization_request.form_fields` and MUST NOT rewrite those fields into the URL.
+
+Otherwise, Harness MUST load `initialization_url` directly in emulated browser.
 
 If browser initialization fails after URL issuance, Harness MUST create a new request instead of reusing same URL.
 
@@ -748,22 +751,27 @@ Service SHOULD return:
 
 - `response.expires_at`
 - `response.one_time = true`
+- `response.initialization_request` when the browser session requires one-time initialization material to be delivered outside the URL
 
-**Initialization URL requirements**
+**Initialization Requirements**
 
-`initialization_url` MUST be:
+The browser-session initialization state MUST be:
 
 - single-use
 - short-lived
 - bound to the approved AgentPass redemption context
 
+`initialization_url` MUST be:
+
+- free of bearer-equivalent initialization material in the query string, path, and fragment
+
 Service MUST generate initialization state atomically with single-use marking to prevent replay races.
 
 #### Browser Session Initialization Endpoint
 
-The initialization URL is obtained from the `initialization_url` field in the browser session redemption response, not from Service configuration. Harnesses use this URL as-is.
+The initialization URL is obtained from the `initialization_url` field in the browser session redemption response, not from Service configuration. Harnesses use this URL as-is unless `initialization_request.method = "POST"`, in which case the Harness submits a browser form POST to that URL using the provided fields.
 
-The initialization URL embeds the initialization token. The URL structure is an internal implementation detail of the Service.
+The initialization URL identifies the initialization endpoint, not the bearer-equivalent secret itself. If one-time initialization material is needed, the Service MUST provide it outside the URL, for example in `initialization_request.form_fields`.
 
 When handling initialization token, Service MUST:
 
@@ -788,9 +796,12 @@ Service MUST:
 
 - issue session cookies with secure attributes appropriate for browser security
 - prevent open redirect behavior
-- set response controls to avoid caching of one-time initialization material
+- set `Cache-Control: no-store` on the browser-session redemption response and on any initialization response that carries one-time initialization material
+- ensure initialization endpoints are resistant to CSRF
+- ensure initialization material is not leaked via referrer headers or shared caches
+- ensure bearer-equivalent initialization material never appears in the URL, including query parameters, path segments, or fragments
 
-Service SHOULD ensure initialization endpoints are resistant to CSRF and token leakage via referrer or logs.
+Service SHOULD choose a construction that also keeps one-time initialization material out of browser history, analytics, and logs.
 
 #### Error Handling
 
@@ -1947,6 +1958,23 @@ All endpoints defined in this specification SHOULD return structured JSON error 
           "format": "uri",
           "pattern": "^https://"
         },
+        "initialization_request": {
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": ["GET", "POST"]
+            },
+            "form_fields": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Form fields the Harness submits when initialization_request.method is POST."
+            }
+          },
+          "additionalProperties": true
+        },
         "expires_at": {
           "type": "string",
           "format": "date-time"
@@ -2341,7 +2369,13 @@ All endpoints defined in this specification SHOULD return structured JSON error 
     "requested_scope": ["dashboard:view"]
   },
   "response": {
-    "initialization_url": "https://api.example.com/init?token=tok_9f8e7d6c5b4a...",
+    "initialization_url": "https://api.example.com/init",
+    "initialization_request": {
+      "method": "POST",
+      "form_fields": {
+        "initialization_token": "tok_9f8e7d6c5b4a..."
+      }
+    },
     "expires_at": "2025-01-15T12:05:00Z",
     "one_time": true
   }
