@@ -375,12 +375,17 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       return errorResponse(401, 'missing_assertion', 'Authorization header with Bearer assertion required');
     }
 
+    let serviceOrigin: string;
     try {
       const payload = decodeJwtPayload(authHeader.slice(7));
+      serviceOrigin = payload.iss as string;
       if (payload.aud !== config.authority) {
         return errorResponse(401, 'invalid_assertion', 'Assertion audience does not match');
       }
-      await verifyServiceAssertion(authHeader.slice(7), payload.iss as string);
+      if (payload.exp && (payload.exp as number) < Math.floor(Date.now() / 1000)) {
+        return errorResponse(401, 'expired_assertion', 'Assertion has expired');
+      }
+      await verifyServiceAssertion(authHeader.slice(7), serviceOrigin);
     } catch (e) {
       return errorResponse(401, 'invalid_assertion', `Assertion verification failed: ${(e as Error).message}`);
     }
@@ -398,6 +403,9 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
 
     const record = await storage.getAuthorizationRecord(body.authorization_id);
     if (!record || record.status !== 'approved') {
+      return errorResponse(404, 'not_found', 'Unknown authorization_id or delegation revoked');
+    }
+    if (record.request.service.origin !== serviceOrigin) {
       return errorResponse(404, 'not_found', 'Unknown authorization_id or delegation revoked');
     }
 
