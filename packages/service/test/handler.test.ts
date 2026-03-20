@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createServiceHandler } from '../src/handler.js';
 import type { ServiceConfig } from '../src/types.js';
+import { importSigningKey, signJwt } from '../src/crypto.js';
 
 const testPrivateKey: JsonWebKey = {
   kty: 'EC',
@@ -44,6 +45,10 @@ describe('Service Handler', () => {
 
   beforeEach(() => {
     handler = createServiceHandler(baseConfig);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('GET /agentpass-service/config.json (configuration)', () => {
@@ -171,6 +176,123 @@ describe('Service Handler', () => {
     });
   });
 
+  describe('POST /agentpass-service/agentpass/scopes', () => {
+    it('accepts a signed assertion from an enterprise authority resolved from the user email domain', async () => {
+      const keyPair = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign', 'verify'],
+      );
+      const enterprisePrivateJwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+      const enterprisePublicJwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+      const signingKey = await importSigningKey(enterprisePrivateJwk);
+      const enterpriseHandler = createServiceHandler({
+        ...baseConfig,
+        dnsResolver: async () => ['"https://enterprise.example.com/ap"'],
+      });
+      const assertion = await signJwt(
+        {
+          iss: 'https://enterprise.example.com',
+          aud: 'https://service.example.com',
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 60,
+        },
+        signingKey,
+        'auth-key-1',
+      );
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+        if (url === 'https://enterprise.example.com/ap') {
+          return new Response(JSON.stringify({
+            authority: 'https://enterprise.example.com',
+            trust_mode: 'enterprise',
+            jwks_uri: 'https://enterprise.example.com/jwks.json',
+            endpoints: {
+              issuance: 'https://enterprise.example.com/issuance',
+              issuance_status: 'https://enterprise.example.com/issuance/{id}',
+              validate: 'https://enterprise.example.com/validate',
+              authorization_check: 'https://enterprise.example.com/authorization-check',
+            },
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (url === 'https://enterprise.example.com/jwks.json') {
+          return new Response(JSON.stringify({ keys: [{ ...enterprisePublicJwk, kid: 'auth-key-1' }] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/scopes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${assertion}`,
+        },
+        body: JSON.stringify({
+          user: { email: 'alex@example.com' },
+          agent: { id: 'agent:test' },
+        }),
+      });
+
+      const res = await enterpriseHandler(req);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as { scopes: Array<{ name: string }> };
+      expect(body.scopes.map(scope => scope.name)).toEqual(['read', 'write']);
+    });
+
+    it('rejects an asserting authority that is not permitted for the user email', async () => {
+      const scopeHandler = createServiceHandler({
+        ...baseConfig,
+        trust: {
+          ...baseConfig.trust,
+          serviceAuthority: {
+            authority: 'https://service-authority.example.com',
+            authority_configuration_url: 'https://service-authority.example.com/ap',
+          },
+        },
+      });
+
+      const token = [
+        btoa(JSON.stringify({ alg: 'none', typ: 'JWT' })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+        btoa(JSON.stringify({
+          iss: 'https://authority.example.com',
+          aud: 'https://service.example.com',
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 60,
+        })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+        '',
+      ].join('.');
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/scopes', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          user: { email: 'alex@example.com' },
+          agent: { id: 'agent:test' },
+        }),
+      });
+
+      const res = await scopeHandler(req);
+      expect(res.status).toBe(403);
+
+      const body = await res.json() as { error: { code: string } };
+      expect(body.error.code).toBe('authority_precedence_violation');
+    });
+  });
+
   describe('POST /agentpass-service/agentpass/redeem-bearer-token', () => {
     it('returns 400 for missing fields', async () => {
       const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
@@ -183,6 +305,23 @@ describe('Service Handler', () => {
       expect(res.status).toBe(400);
     });
 
+    it('returns 400 when user.email is missing', async () => {
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'bearer_token', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+        }),
+      });
+
+      const res = await handler(req);
+      expect(res.status).toBe(400);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.message).toBe('user.email is required');
+    });
+
     it('returns 403 for untrusted authority', async () => {
       const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
         method: 'POST',
@@ -190,6 +329,7 @@ describe('Service Handler', () => {
         body: JSON.stringify({
           agentpass: { type: 'bearer_token', value: 'ap_test' },
           authority: 'https://untrusted.example.com',
+          user: { email: 'alex@example.com' },
         }),
       });
 
@@ -197,8 +337,123 @@ describe('Service Handler', () => {
       expect(res.status).toBe(403);
     });
 
+    it('returns 403 when requested authority violates precedence for the user email', async () => {
+      const precedenceHandler = createServiceHandler({
+        ...baseConfig,
+        trust: {
+          ...baseConfig.trust,
+          serviceAuthority: {
+            authority: 'https://service-authority.example.com',
+            authority_configuration_url: 'https://service-authority.example.com/ap',
+          },
+        },
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'bearer_token', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await precedenceHandler(req);
+      expect(res.status).toBe(403);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('authority_precedence_violation');
+    });
+
+    it('redeems successfully with an enterprise authority resolved from the user email domain', async () => {
+      const keyPair = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign', 'verify'],
+      );
+      const enterpriseSigningKey = await crypto.subtle.exportKey('jwk', keyPair.privateKey);
+      const enterpriseHandler = createServiceHandler({
+        ...baseConfig,
+        signingKey: enterpriseSigningKey,
+        dnsResolver: async () => ['"https://enterprise.example.com/ap"'],
+      });
+
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+        if (url === 'https://enterprise.example.com/ap') {
+          return new Response(JSON.stringify({
+            authority: 'https://enterprise.example.com',
+            trust_mode: 'enterprise',
+            jwks_uri: 'https://enterprise.example.com/jwks.json',
+            endpoints: {
+              issuance: 'https://enterprise.example.com/issuance',
+              issuance_status: 'https://enterprise.example.com/issuance/{id}',
+              validate: 'https://enterprise.example.com/validate',
+              authorization_check: 'https://enterprise.example.com/authorization-check',
+            },
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (url === 'https://enterprise.example.com/validate') {
+          expect(init?.method).toBe('POST');
+          return new Response(JSON.stringify({
+            authorization_id: 'authz_123',
+            user: { email: 'alex@example.com' },
+            agent: { id: 'agent:test' },
+            scope: ['read'],
+            type: 'bearer_token',
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'bearer_token', value: 'ap_enterprise' },
+          authority: 'https://enterprise.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await enterpriseHandler(req);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as { bearer_token: string; scope: string[] };
+      expect(body.bearer_token).toContain('alex@example.com');
+      expect(body.scope).toEqual(['read']);
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
     it('returns 400 for wrong type', async () => {
       const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'browser_session', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await handler(req);
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('POST /agentpass-service/agentpass/redeem-browser-session', () => {
+    it('returns 400 when user.email is missing', async () => {
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-browser-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -209,10 +464,11 @@ describe('Service Handler', () => {
 
       const res = await handler(req);
       expect(res.status).toBe(400);
-    });
-  });
 
-  describe('POST /agentpass-service/agentpass/redeem-browser-session', () => {
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.message).toBe('user.email is required');
+    });
+
     it('returns 400 for wrong type', async () => {
       const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-browser-session', {
         method: 'POST',
@@ -220,6 +476,7 @@ describe('Service Handler', () => {
         body: JSON.stringify({
           agentpass: { type: 'bearer_token', value: 'ap_test' },
           authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
         }),
       });
 

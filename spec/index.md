@@ -1891,7 +1891,8 @@ All endpoints defined in this specification SHOULD return structured JSON error 
       "type": "object",
       "required": [
         "agentpass",
-        "authority"
+        "authority",
+        "user"
       ],
       "properties": {
         "agentpass": {
@@ -1931,6 +1932,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
         },
         "user": {
           "type": "object",
+          "required": ["email"],
           "properties": {
             "email": {
               "type": "string",
@@ -1984,7 +1986,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
   "properties": {
     "request": {
       "type": "object",
-      "required": ["agentpass", "authority"],
+      "required": ["agentpass", "authority", "user"],
       "properties": {
         "agentpass": {
           "type": "object",
@@ -2014,6 +2016,7 @@ All endpoints defined in this specification SHOULD return structured JSON error 
         },
         "user": {
           "type": "object",
+          "required": ["email"],
           "properties": {
             "email": { "type": "string", "format": "email" }
           },
