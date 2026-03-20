@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createAuthorityHandler } from '../src/handler.js';
+import { importSigningKey, signJwt } from '../src/crypto.js';
 import { MemoryStorage } from '../src/storage.js';
 import type { AuthorityConfig } from '../src/types.js';
 
@@ -44,6 +45,11 @@ describe('Authority Handler', () => {
   beforeEach(() => {
     storage = new MemoryStorage();
     handler = createAuthorityHandler(testConfig, storage);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('GET /agentpass-authority/ap (configuration)', () => {
@@ -138,6 +144,200 @@ describe('Authority Handler', () => {
       const body = await res.json() as Record<string, unknown>;
       expect(body.status).toBe('approved');
       expect(body.agentpass).toBeDefined();
+    });
+
+    it('accepts a harness attestation from a pinned trusted issuer', async () => {
+      const harnessKeys = await generateEcJwkPair();
+      const attestorKeys = await generateEcJwkPair();
+      const attestationJwt = await signHarnessAttestation({
+        privateJwk: attestorKeys.privateJwk,
+        issuer: 'https://attestor.example.com',
+        subject: 'test-harness',
+        harnessJwk: harnessKeys.publicJwk,
+      });
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+        if (url === 'https://attestor.example.com/jwks.json') {
+          return new Response(JSON.stringify({ keys: [attestorKeys.publicJwk] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        throw new Error(`Unexpected fetch to ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const trustedHandler = createAuthorityHandler(
+        {
+          ...testConfig,
+          trustedHarnessAttestationIssuers: [
+            {
+              issuer: 'https://attestor.example.com',
+              jwksUri: 'https://attestor.example.com/jwks.json',
+            },
+          ],
+        },
+        storage,
+      );
+
+      const req = new Request('https://authority.example.com/agentpass-authority/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeIssuanceBody({
+          harness: {
+            id: 'test-harness',
+            cnf: { jwk: harnessKeys.publicJwk },
+            attestation: { jwt: attestationJwt },
+          },
+        })),
+      });
+
+      const res = await trustedHandler(req);
+      expect(res.status).toBe(202);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledWith('https://attestor.example.com/jwks.json');
+    });
+
+    it('rejects a harness attestation from an untrusted issuer without dereferencing issuer URLs', async () => {
+      const harnessKeys = await generateEcJwkPair();
+      const attestorKeys = await generateEcJwkPair();
+      const attestationJwt = await signHarnessAttestation({
+        privateJwk: attestorKeys.privateJwk,
+        issuer: 'https://attestor.example.com',
+        subject: 'test-harness',
+        harnessJwk: harnessKeys.publicJwk,
+      });
+
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const req = new Request('https://authority.example.com/agentpass-authority/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeIssuanceBody({
+          harness: {
+            id: 'test-harness',
+            cnf: { jwk: harnessKeys.publicJwk },
+            attestation: { jwt: attestationJwt },
+          },
+        })),
+      });
+
+      const res = await handler(req);
+      expect(res.status).toBe(401);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('attestation_error');
+      expect(body.error.message).toContain('not trusted');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('rejects a harness attestation whose sub does not match harness.id', async () => {
+      const harnessKeys = await generateEcJwkPair();
+      const attestorKeys = await generateEcJwkPair();
+      const attestationJwt = await signHarnessAttestation({
+        privateJwk: attestorKeys.privateJwk,
+        issuer: 'https://attestor.example.com',
+        subject: 'different-harness',
+        harnessJwk: harnessKeys.publicJwk,
+      });
+
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ keys: [attestorKeys.publicJwk] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const trustedHandler = createAuthorityHandler(
+        {
+          ...testConfig,
+          trustedHarnessAttestationIssuers: [
+            {
+              issuer: 'https://attestor.example.com',
+              jwksUri: 'https://attestor.example.com/jwks.json',
+            },
+          ],
+        },
+        storage,
+      );
+
+      const req = new Request('https://authority.example.com/agentpass-authority/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeIssuanceBody({
+          harness: {
+            id: 'test-harness',
+            cnf: { jwk: harnessKeys.publicJwk },
+            attestation: { jwt: attestationJwt },
+          },
+        })),
+      });
+
+      const res = await trustedHandler(req);
+      expect(res.status).toBe(400);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('attestation_error');
+      expect(body.error.message).toContain('sub must match harness.id');
+    });
+
+    it('accepts equivalent harness attestation cnf.jwk values with different metadata or field order', async () => {
+      const harnessKeys = await generateEcJwkPair();
+      const attestorKeys = await generateEcJwkPair();
+      const attestationJwt = await signHarnessAttestation({
+        privateJwk: attestorKeys.privateJwk,
+        issuer: 'https://attestor.example.com',
+        subject: 'test-harness',
+        harnessJwk: {
+          y: harnessKeys.publicJwk.y,
+          x: harnessKeys.publicJwk.x,
+          crv: harnessKeys.publicJwk.crv,
+          kty: harnessKeys.publicJwk.kty,
+          kid: 'vendor-key-1',
+          use: 'sig',
+        },
+      });
+
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ keys: [attestorKeys.publicJwk] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const trustedHandler = createAuthorityHandler(
+        {
+          ...testConfig,
+          trustedHarnessAttestationIssuers: [
+            {
+              issuer: 'https://attestor.example.com',
+              jwksUri: 'https://attestor.example.com/jwks.json',
+            },
+          ],
+        },
+        storage,
+      );
+
+      const req = new Request('https://authority.example.com/agentpass-authority/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(makeIssuanceBody({
+          harness: {
+            id: 'test-harness',
+            cnf: { jwk: harnessKeys.publicJwk },
+            attestation: { jwt: attestationJwt },
+          },
+        })),
+      });
+
+      const res = await trustedHandler(req);
+      expect(res.status).toBe(202);
     });
   });
 
@@ -251,3 +451,38 @@ describe('Authority Handler', () => {
     });
   });
 });
+
+async function generateEcJwkPair(): Promise<{ privateJwk: JsonWebKey; publicJwk: JsonWebKey }> {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify'],
+  );
+
+  return {
+    privateJwk: await crypto.subtle.exportKey('jwk', keyPair.privateKey),
+    publicJwk: await crypto.subtle.exportKey('jwk', keyPair.publicKey),
+  };
+}
+
+async function signHarnessAttestation(params: {
+  privateJwk: JsonWebKey;
+  issuer: string;
+  subject: string;
+  harnessJwk: JsonWebKey;
+}): Promise<string> {
+  const signingKey = await importSigningKey(params.privateJwk);
+  const now = Math.floor(Date.now() / 1000);
+
+  return signJwt(
+    {
+      iss: params.issuer,
+      sub: params.subject,
+      cnf: { jwk: params.harnessJwk },
+      iat: now,
+      exp: now + 60,
+    },
+    signingKey,
+    'attestor-key-1',
+  );
+}
