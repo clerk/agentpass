@@ -163,17 +163,17 @@ export function createServiceHandler(config: ServiceConfig) {
       }
     }
 
-    // No DNS record — return federated authorities
-    if (config.trust.trustedFederatedAuthorities && config.trust.trustedFederatedAuthorities.length > 0) {
-      return json({
-        trusted_federated_authorities: config.trust.trustedFederatedAuthorities,
-      });
-    }
-
-    // Check for service authority as fallback
+    // No DNS record — prefer Service Authority when configured
     if (config.trust.serviceAuthority) {
       return json({
         service_authority: config.trust.serviceAuthority,
+      });
+    }
+
+    // Otherwise return federated authorities
+    if (config.trust.trustedFederatedAuthorities && config.trust.trustedFederatedAuthorities.length > 0) {
+      return json({
+        trusted_federated_authorities: config.trust.trustedFederatedAuthorities,
       });
     }
 
