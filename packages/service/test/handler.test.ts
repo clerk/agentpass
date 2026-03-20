@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createServiceHandler } from '../src/handler.js';
 import type { ServiceConfig } from '../src/types.js';
 
@@ -44,6 +44,11 @@ describe('Service Handler', () => {
 
   beforeEach(() => {
     handler = createServiceHandler(baseConfig);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('GET /agentpass-service/config.json (configuration)', () => {
@@ -121,7 +126,7 @@ describe('Service Handler', () => {
       expect(res.status).toBe(403);
     });
 
-    it('prefers service authority over federated authorities when no enterprise DNS exists', async () => {
+    it('returns only the service authority by default when no enterprise DNS exists and both options are configured', async () => {
       const serviceAuthorityHandler = createServiceHandler({
         ...baseConfig,
         trust: {
@@ -142,13 +147,133 @@ describe('Service Handler', () => {
       const res = await serviceAuthorityHandler(req);
       expect(res.status).toBe(200);
 
-      const body = await res.json() as { service_authority: { authority: string } };
+      const body = await res.json() as {
+        service_authority: { authority: string };
+        trusted_federated_authorities?: Array<{ authority: string }>;
+      };
       expect(body.service_authority.authority).toBe('https://service-authority.example.com');
+      expect(body.trusted_federated_authorities).toBeUndefined();
+    });
+
+    it('returns both service and federated authorities when no enterprise DNS exists and service allows either', async () => {
+      const serviceAuthorityHandler = createServiceHandler({
+        ...baseConfig,
+        allowServiceAuthorityOrFederatedChoice: true,
+        trust: {
+          ...baseConfig.trust,
+          serviceAuthority: {
+            authority: 'https://service-authority.example.com',
+            authority_configuration_url: 'https://service-authority.example.com/ap',
+          },
+        },
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/resolve-authorities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: { email: 'alex@example.com' } }),
+      });
+
+      const res = await serviceAuthorityHandler(req);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as {
+        service_authority: { authority: string };
+        trusted_federated_authorities: Array<{ authority: string }>;
+      };
+      expect(body.service_authority.authority).toBe('https://service-authority.example.com');
+      expect(body.trusted_federated_authorities).toHaveLength(1);
+      expect(body.trusted_federated_authorities[0].authority).toBe('https://authority.example.com');
+    });
+
+    it('returns 500 when service requires its own authority but no service authority is configured', async () => {
+      const misconfiguredHandler = createServiceHandler({
+        ...baseConfig,
+        requireServiceAuthority: true,
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/resolve-authorities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: { email: 'alex@example.com' } }),
+      });
+
+      const res = await misconfiguredHandler(req);
+      expect(res.status).toBe(500);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('service_misconfigured');
+      expect(body.error.message).toContain('requireServiceAuthority');
+    });
+
+    it('returns agents_unsupported when service requires its own authority but enterprise policy disallows it', async () => {
+      const serviceAuthorityHandler = createServiceHandler({
+        ...baseConfig,
+        requireServiceAuthority: true,
+        trust: {
+          ...baseConfig.trust,
+          serviceAuthority: {
+            authority: 'https://service-authority.example.com',
+            authority_configuration_url: 'https://service-authority.example.com/ap',
+          },
+        },
+        dnsResolver: async () => ['"https://enterprise.example.com/ap"'],
+      });
+
+      vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+        if (url === 'https://enterprise.example.com/ap') {
+          return new Response(JSON.stringify({
+            authority: 'https://enterprise.example.com',
+            trust_mode: 'enterprise',
+            jwks_uri: 'https://enterprise.example.com/jwks.json',
+            endpoints: {
+              issuance: 'https://enterprise.example.com/issue',
+              issuance_status: 'https://enterprise.example.com/issuance-status',
+              validate: 'https://enterprise.example.com/validate',
+              authorization_check: 'https://enterprise.example.com/authorization-check',
+            },
+            policy: {
+              allow_service_authorities: false,
+            },
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        throw new Error(`Unexpected fetch to ${url}`);
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/resolve-authorities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: { email: 'alex@example.com' } }),
+      });
+
+      const res = await serviceAuthorityHandler(req);
+      expect(res.status).toBe(403);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('agents_unsupported');
+      expect(body.error.message).toContain('requires its own authority');
     });
 
     it('uses custom resolver when provided', async () => {
       const customHandler = createServiceHandler({
         ...baseConfig,
+        trust: {
+          ...baseConfig.trust,
+          serviceAuthority: {
+            authority: 'https://custom.example.com',
+            authority_configuration_url: 'https://custom.example.com/ap',
+          },
+        },
         onResolveAuthority: async () => ({
           service_authority: {
             authority: 'https://custom.example.com',
@@ -168,6 +293,98 @@ describe('Service Handler', () => {
 
       const body = await res.json() as { service_authority: { authority: string } };
       expect(body.service_authority.authority).toBe('https://custom.example.com');
+    });
+
+    it('returns 500 when custom resolver returns an invalid authority combination', async () => {
+      const customHandler = createServiceHandler({
+        ...baseConfig,
+        onResolveAuthority: async () => ({
+          enterprise_authority: {
+            authority: 'https://enterprise.example.com',
+            authority_configuration_url: 'https://enterprise.example.com/ap',
+          },
+          service_authority: {
+            authority: 'https://custom.example.com',
+            authority_configuration_url: 'https://custom.example.com/ap',
+          },
+        }),
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/resolve-authorities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: { email: 'alex@example.com' } }),
+      });
+
+      const res = await customHandler(req);
+      expect(res.status).toBe(500);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('resolution_error');
+      expect(body.error.message).toContain('enterprise_authority');
+    });
+
+    it('returns 500 when custom resolver returns both service and federated authorities without opt-in', async () => {
+      const customHandler = createServiceHandler({
+        ...baseConfig,
+        trust: {
+          ...baseConfig.trust,
+          serviceAuthority: {
+            authority: 'https://custom.example.com',
+            authority_configuration_url: 'https://custom.example.com/ap',
+          },
+        },
+        onResolveAuthority: async () => ({
+          service_authority: {
+            authority: 'https://custom.example.com',
+            authority_configuration_url: 'https://custom.example.com/ap',
+          },
+          trusted_federated_authorities: [
+            {
+              authority: 'https://authority.example.com',
+              authority_configuration_url: 'https://authority.example.com/ap',
+            },
+          ],
+        }),
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/resolve-authorities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: { email: 'alex@example.com' } }),
+      });
+
+      const res = await customHandler(req);
+      expect(res.status).toBe(500);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('resolution_error');
+      expect(body.error.message).toContain('allowServiceAuthorityOrFederatedChoice');
+    });
+
+    it('returns 500 when custom resolver returns a service authority not declared in trust config', async () => {
+      const customHandler = createServiceHandler({
+        ...baseConfig,
+        onResolveAuthority: async () => ({
+          service_authority: {
+            authority: 'https://custom.example.com',
+            authority_configuration_url: 'https://custom.example.com/ap',
+          },
+        }),
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/resolve-authorities', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: { email: 'alex@example.com' } }),
+      });
+
+      const res = await customHandler(req);
+      expect(res.status).toBe(500);
+
+      const body = await res.json() as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('resolution_error');
+      expect(body.error.message).toContain('config.trust.serviceAuthority');
     });
   });
 

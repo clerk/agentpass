@@ -37,6 +37,10 @@ export interface ServiceConfig {
   authorityConfigOverrides?: Record<string, string>;
   /** Map of public origins to internal origins for Docker/container networking */
   internalOriginOverrides?: Record<string, string>;
+  /** If true, reject delegation when this Service's own authority cannot be used. Requires trust.serviceAuthority. */
+  requireServiceAuthority?: boolean;
+  /** If true, authority resolution may offer both the Service Authority and trusted federated options when no Enterprise Authority exists. */
+  allowServiceAuthorityOrFederatedChoice?: boolean;
 }
 
 export interface TrustEntry {
@@ -95,9 +99,26 @@ export type AuthorityResolutionHandler = (params: {
 }) => Promise<AuthorityResolutionResult>;
 
 export type AuthorityResolutionResult =
-  | { enterprise_authority: TrustEntry }
-  | { trusted_federated_authorities: TrustEntry[] }
-  | { service_authority: TrustEntry };
+  | {
+    enterprise_authority: TrustEntry;
+    trusted_federated_authorities?: never;
+    service_authority?: never;
+  }
+  | {
+    trusted_federated_authorities: TrustEntry[];
+    enterprise_authority?: never;
+    service_authority?: never;
+  }
+  | {
+    service_authority: TrustEntry;
+    enterprise_authority?: never;
+    trusted_federated_authorities?: never;
+  }
+  | {
+    service_authority: TrustEntry;
+    trusted_federated_authorities: TrustEntry[];
+    enterprise_authority?: never;
+  };
 
 // ─── DNS ───
 
