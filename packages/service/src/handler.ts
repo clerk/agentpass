@@ -264,6 +264,11 @@ export function createServiceHandler(config: ServiceConfig) {
       return errorResponse(422, 'validation_failed', (e as Error).message);
     }
 
+    const authorizationExpiry = parseFutureDate(validation.authorization_expires_at);
+    if (!authorizationExpiry) {
+      return errorResponse(422, 'validation_failed', 'Delegation has already expired or returned an invalid authorization_expires_at');
+    }
+
     // Scope validation
     let grantedScope = validation.scope;
     if (body.requested_scope) {
@@ -298,11 +303,14 @@ export function createServiceHandler(config: ServiceConfig) {
         taskId: validation.task?.id,
         taskDescription: validation.task?.description,
         authorizationId: validation.authorization_id,
+        authorizationExpiresAt: validation.authorization_expires_at,
       });
+
+      const expiresAt = clampIsoTimestamp(result.expires_at, authorizationExpiry);
 
       return json({
         initialization_url: result.initialization_url,
-        expires_at: result.expires_at,
+        ...(expiresAt && { expires_at: expiresAt }),
         one_time: true,
       });
     } catch (e) {
@@ -345,6 +353,11 @@ export function createServiceHandler(config: ServiceConfig) {
       return errorResponse(422, 'validation_failed', (e as Error).message);
     }
 
+    const authorizationExpiry = parseFutureDate(validation.authorization_expires_at);
+    if (!authorizationExpiry) {
+      return errorResponse(422, 'validation_failed', 'Delegation has already expired or returned an invalid authorization_expires_at');
+    }
+
     let grantedScope = validation.scope;
     if (body.requested_scope) {
       grantedScope = validation.scope.includes('*')
@@ -375,12 +388,15 @@ export function createServiceHandler(config: ServiceConfig) {
         taskId: validation.task?.id,
         taskDescription: validation.task?.description,
         authorizationId: validation.authorization_id,
+        authorizationExpiresAt: validation.authorization_expires_at,
       });
+
+      const expiresIn = clampExpiresInSeconds(result.expires_in, authorizationExpiry);
 
       return json({
         bearer_token: result.bearer_token,
         scope: result.scope || grantedScope,
-        expires_in: result.expires_in,
+        ...(expiresIn !== undefined && { expires_in: expiresIn }),
       });
     } catch (e) {
       return errorResponse(500, 'redemption_error', (e as Error).message);
@@ -549,4 +565,28 @@ function errorResponse(status: number, code: string, message: string): Response 
 
 function notFound(): Response {
   return errorResponse(404, 'not_found', 'Endpoint not found');
+}
+
+function parseFutureDate(value: string): Date | null {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  if (parsed.getTime() <= Date.now()) return null;
+  return parsed;
+}
+
+function clampIsoTimestamp(value: string | undefined, max: Date): string | undefined {
+  if (!value) return undefined;
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error('Invalid expires_at returned by onRedeemBrowserSession');
+  }
+
+  return new Date(Math.min(parsed.getTime(), max.getTime())).toISOString();
+}
+
+function clampExpiresInSeconds(value: number | undefined, max: Date): number | undefined {
+  const maxSeconds = Math.max(0, Math.floor((max.getTime() - Date.now()) / 1000));
+  if (value === undefined) return undefined;
+  return Math.max(0, Math.min(value, maxSeconds));
 }
