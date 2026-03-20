@@ -7,6 +7,8 @@ import type {
   ServiceConfig,
   AuthorityValidationResponse,
   AgentPassError,
+  AuthorityResolutionResult,
+  TrustEntry,
 } from './types.js';
 import {
   signJwt,
@@ -118,6 +120,7 @@ export function createServiceHandler(config: ServiceConfig) {
     if (config.onResolveAuthority) {
       try {
         const result = await config.onResolveAuthority({ userEmail: body.user.email });
+        assertValidAuthorityResolutionResult(result, config);
         return json(result);
       } catch (e) {
         return errorResponse(500, 'resolution_error', (e as Error).message);
@@ -128,6 +131,14 @@ export function createServiceHandler(config: ServiceConfig) {
     const emailDomain = body.user.email.split('@')[1];
     if (!emailDomain) {
       return errorResponse(400, 'invalid_email', 'Invalid email address');
+    }
+
+    if (config.requireServiceAuthority && !config.trust.serviceAuthority) {
+      return errorResponse(
+        500,
+        'service_misconfigured',
+        'requireServiceAuthority requires trust.serviceAuthority to be configured',
+      );
     }
 
     // Step 1: Try enterprise discovery via DNS
@@ -149,6 +160,13 @@ export function createServiceHandler(config: ServiceConfig) {
           if (allowServiceAuth) {
             return json({ service_authority: config.trust.serviceAuthority });
           }
+          if (config.requireServiceAuthority) {
+            return errorResponse(
+              403,
+              'agents_unsupported',
+              'This service requires its own authority, but the enterprise authority does not allow it',
+            );
+          }
         }
 
         return json({
@@ -163,7 +181,22 @@ export function createServiceHandler(config: ServiceConfig) {
       }
     }
 
-    // No DNS record — prefer Service Authority when configured
+    const hasServiceAuthority = !!config.trust.serviceAuthority;
+    const hasFederatedAuthorities = !!config.trust.trustedFederatedAuthorities?.length;
+
+    if (
+      hasServiceAuthority
+      && hasFederatedAuthorities
+      && !config.requireServiceAuthority
+      && config.allowServiceAuthorityOrFederatedChoice
+    ) {
+      return json({
+        service_authority: config.trust.serviceAuthority,
+        trusted_federated_authorities: config.trust.trustedFederatedAuthorities,
+      });
+    }
+
+    // No DNS record — return Service Authority when configured
     if (config.trust.serviceAuthority) {
       return json({
         service_authority: config.trust.serviceAuthority,
@@ -171,7 +204,7 @@ export function createServiceHandler(config: ServiceConfig) {
     }
 
     // Otherwise return federated authorities
-    if (config.trust.trustedFederatedAuthorities && config.trust.trustedFederatedAuthorities.length > 0) {
+    if (hasFederatedAuthorities) {
       return json({
         trusted_federated_authorities: config.trust.trustedFederatedAuthorities,
       });
@@ -547,6 +580,91 @@ function errorResponse(status: number, code: string, message: string): Response 
   return json(body, status);
 }
 
-function notFound(): Response {
-  return errorResponse(404, 'not_found', 'Endpoint not found');
-}
+  function notFound(): Response {
+    return errorResponse(404, 'not_found', 'Endpoint not found');
+  }
+
+  function assertValidAuthorityResolutionResult(
+    result: unknown,
+    cfg: ServiceConfig,
+  ): asserts result is AuthorityResolutionResult {
+    if (!result || typeof result !== 'object') {
+      throw new Error('Custom authority resolver must return an object');
+    }
+
+    const candidate = result as Record<string, unknown>;
+    const enterpriseAuthority = candidate.enterprise_authority;
+    const serviceAuthority = candidate.service_authority;
+    const federatedAuthorities = candidate.trusted_federated_authorities;
+
+    const hasEnterpriseAuthority = enterpriseAuthority !== undefined;
+    const hasServiceAuthority = serviceAuthority !== undefined;
+    const hasFederatedAuthorities = federatedAuthorities !== undefined;
+
+    if (!hasEnterpriseAuthority && !hasServiceAuthority && !hasFederatedAuthorities) {
+      throw new Error(
+        'Custom authority resolver must return enterprise_authority, service_authority, or trusted_federated_authorities',
+      );
+    }
+
+    if (hasEnterpriseAuthority && (hasServiceAuthority || hasFederatedAuthorities)) {
+      throw new Error('enterprise_authority cannot be combined with service_authority or trusted_federated_authorities');
+    }
+
+    if (hasEnterpriseAuthority) {
+      assertTrustEntry(enterpriseAuthority, 'enterprise_authority');
+    }
+
+    if (hasServiceAuthority) {
+      assertTrustEntry(serviceAuthority, 'service_authority');
+      if (!cfg.trust.serviceAuthority || !sameTrustEntry(serviceAuthority, cfg.trust.serviceAuthority)) {
+        throw new Error('service_authority must match config.trust.serviceAuthority');
+      }
+    }
+
+    if (hasFederatedAuthorities) {
+      if (!Array.isArray(federatedAuthorities) || federatedAuthorities.length === 0) {
+        throw new Error('trusted_federated_authorities must be a non-empty array');
+      }
+      federatedAuthorities.forEach((entry, index) => {
+        assertTrustEntry(entry, `trusted_federated_authorities[${index}]`);
+        if (!cfg.trust.trustedFederatedAuthorities?.some((configured) => sameTrustEntry(entry, configured))) {
+          throw new Error(
+            `trusted_federated_authorities[${index}] must be present in config.trust.trustedFederatedAuthorities`,
+          );
+        }
+      });
+    }
+
+    if (cfg.requireServiceAuthority && !hasServiceAuthority) {
+      throw new Error('requireServiceAuthority requires service_authority in the resolver result');
+    }
+
+    if (hasServiceAuthority && hasFederatedAuthorities && !cfg.allowServiceAuthorityOrFederatedChoice) {
+      throw new Error(
+        'allowServiceAuthorityOrFederatedChoice must be enabled when returning both service_authority and trusted_federated_authorities',
+      );
+    }
+  }
+
+  function assertTrustEntry(value: unknown, fieldName: string): asserts value is TrustEntry {
+    if (!value || typeof value !== 'object') {
+      throw new Error(`${fieldName} must be an object`);
+    }
+
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.authority !== 'string' || !entry.authority.startsWith('https://')) {
+      throw new Error(`${fieldName}.authority must be an HTTPS URL`);
+    }
+    if (
+      typeof entry.authority_configuration_url !== 'string'
+      || !entry.authority_configuration_url.startsWith('https://')
+    ) {
+      throw new Error(`${fieldName}.authority_configuration_url must be an HTTPS URL`);
+    }
+  }
+
+  function sameTrustEntry(left: TrustEntry, right: TrustEntry): boolean {
+    return left.authority === right.authority
+      && left.authority_configuration_url === right.authority_configuration_url;
+  }

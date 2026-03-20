@@ -126,9 +126,14 @@ export async function testService(url: string): Promise<TestSuiteResult> {
           body: JSON.stringify({ user: { email: 'test@example.com' } }),
         });
         const resolveBody = await resolveRes.json() as Record<string, unknown>;
-        const hasAuthority = !!resolveBody.enterprise_authority ||
-          !!resolveBody.trusted_federated_authorities ||
-          !!resolveBody.service_authority;
+        const hasEnterpriseAuthority = !!resolveBody.enterprise_authority;
+        const hasServiceAuthority = !!resolveBody.service_authority;
+        const hasFederatedAuthorities = Array.isArray(resolveBody.trusted_federated_authorities)
+          && resolveBody.trusted_federated_authorities.length > 0;
+        const hasAuthority = hasEnterpriseAuthority || hasServiceAuthority || hasFederatedAuthorities;
+        const validAuthorityCombination = hasEnterpriseAuthority
+          ? !hasServiceAuthority && !hasFederatedAuthorities
+          : hasServiceAuthority || hasFederatedAuthorities;
 
         tests.push({
           name: 'Authority resolution endpoint responds',
@@ -141,8 +146,12 @@ export async function testService(url: string): Promise<TestSuiteResult> {
         if (resolveRes.ok) {
           tests.push({
             name: 'Authority resolution returns valid authority type',
-            passed: hasAuthority,
-            message: hasAuthority ? 'Valid authority returned' : 'Missing authority in response',
+            passed: hasAuthority && validAuthorityCombination,
+            message: hasAuthority
+              ? validAuthorityCombination
+                ? 'Valid authority returned'
+                : 'Invalid authority combination returned'
+              : 'Missing authority in response',
           });
         }
       } catch (e) {

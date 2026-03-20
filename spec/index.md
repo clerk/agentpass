@@ -237,10 +237,9 @@ Request MUST include:
 
 - `request.user.email` — the User email address (**`user.email`**) the Harness intends to sign in as
 
-Response MUST include exactly one of:
+Response MUST include either:
   - `response.enterprise_authority`, or
-  - `response.service_authority`, or
-  - `response.trusted_federated_authorities`
+  - one or both of `response.service_authority` and `response.trusted_federated_authorities`
 
 If `response.enterprise_authority` is present:
 
@@ -249,10 +248,10 @@ If `response.enterprise_authority` is present:
 
 If `response.service_authority` is present:
 
-- Harness MUST use it as the selected authority.
-- Harness MUST NOT use a federated authority.
+- If `response.trusted_federated_authorities` is not present, Harness MUST use the Service Authority as the selected authority.
+- If `response.trusted_federated_authorities` is also present, Harness MUST choose exactly one authority from the offered set: either the `service_authority` or one authority from `trusted_federated_authorities`.
 
-If `response.trusted_federated_authorities` is present:
+If `response.trusted_federated_authorities` is present and `response.service_authority` is not present:
 
 - Harness MUST choose exactly one authority from that list (typically by asking a human operator which provider they prefer).
 - Harness MUST NOT use an authority outside that list.
@@ -481,7 +480,7 @@ This section defines the JSON configuration document returned by a **Service Con
 - `jwks_uri` (required): JWKS URL for Service request signing. Used by Authorities to verify Service identity when processing AgentPass validation and scope refresh requests.
 - `trust` (required): trust declarations.
 - `trust.trusted_federated_authorities` (optional): list of Federated Authorities this Service is willing to trust (HTTPS). Returned federated options from the Authority Resolution Endpoint MUST be a subset of this list.
-- `trust.service_authority` (optional): a single Authority with `trust_mode = "service"` operated by this Service. When configured, the Service MAY return this Authority from the Authority Resolution Endpoint as a first-class selection result. When an Enterprise Authority exists, use of the Service Authority remains subject to the Enterprise Authority's `policy.allow_service_authorities` setting (Section 5.2). Same shape as a `trusted_federated_authorities` entry (`authority`, `authority_configuration_url`).
+- `trust.service_authority` (optional): a single Authority with `trust_mode = "service"` operated by this Service. When configured, the Service MAY return this Authority from the Authority Resolution Endpoint as a first-class selection result, either by itself or alongside `trusted_federated_authorities` when no Enterprise Authority exists and Service policy allows both options. When an Enterprise Authority exists, use of the Service Authority remains subject to the Enterprise Authority's `policy.allow_service_authorities` setting (Section 5.2). Same shape as a `trusted_federated_authorities` entry (`authority`, `authority_configuration_url`).
 - `endpoints` (required): Service integration endpoints.
 - `endpoints.resolve_authorities` (required): authority-resolution endpoint (`POST`).
 - `endpoints.redeem_browser_session` (required): browser session AgentPass redemption endpoint (`POST`).
@@ -539,11 +538,12 @@ Service MUST:
 1. Derive the User email domain from the email domain portion of `request.user.email`.
 2. Determine whether the derived User email domain has an Enterprise Authority by performing enterprise discovery for that domain (`_agentpass.{user_email_domain}`) (Section 5.2).
 3. If enterprise discovery returns a URL and the discovered Enterprise Authority configuration can be fetched and validated:
-   - If the Service has a `trust.service_authority` configured, fetch the Enterprise Authority's configuration and check `policy.allow_service_authorities` (default `true`). If `true`, Service MAY return the Service Authority instead of the Enterprise Authority. If `false`, Service MUST return the Enterprise Authority.
+   - If the Service has a `trust.service_authority` configured, fetch the Enterprise Authority's configuration and check `policy.allow_service_authorities` (default `true`). If `true`, Service MAY return the Service Authority instead of the Enterprise Authority. If `false`, Service MUST either return the Enterprise Authority or reject with a clear policy error if Service policy requires use of the Service Authority.
    - Otherwise, return the Enterprise Authority.
 4. If enterprise discovery returns `none`, or if enterprise discovery returns a URL but the discovered configuration cannot be fetched or validated, reject the request and MUST NOT return Federated Authority or Service Authority options.
 5. If enterprise discovery does not resolve (no DNS record):
-   - If the Service has a `trust.service_authority` configured and selects it by Service policy, return the Service Authority.
+   - If the Service has a `trust.service_authority` configured and trusted Federated Authority options are also available, Service MAY return both in the same response if Service policy allows either path.
+   - Otherwise, if the Service has a `trust.service_authority` configured and selects it by Service policy, return the Service Authority.
    - Otherwise, if trusted Federated Authority options are available, return only trusted Federated Authority options that are explicitly defined in Service Configuration (`trust.trusted_federated_authorities`) and selected by Service policy.
    - Otherwise, reject the request.
 
@@ -554,14 +554,16 @@ Services MUST enforce the same precedence rules at redemption time (Section 4.4,
 
 **Response**
 
-Response MUST include exactly one field, determined by the discovery result:
+Response MUST include either `enterprise_authority`, or one or both of `service_authority` and `trusted_federated_authorities`, determined by the discovery result:
 
 | Discovery result | Response field |
 |---|---|
 | Enterprise Authority found, no Service Authority (or policy disallows) | `enterprise_authority` |
 | Enterprise Authority found, Service Authority permitted by policy | `service_authority` |
+| Enterprise Authority found, Service Authority required by Service policy but disallowed by Enterprise policy | reject with a clear policy error (for example `403 agents_unsupported`) |
 | `none` | reject — MUST NOT return any authority |
 | Fetch/validation failure | reject — MUST NOT return any authority |
+| No DNS record, Service Authority configured and trusted Federated options also available, Service policy allows either | `service_authority` and `trusted_federated_authorities` |
 | No DNS record, Service Authority selected by Service policy | `service_authority` |
 | No DNS record, no Service Authority selected, trusted Federated options available | `trusted_federated_authorities` (non-empty; each entry MUST be in Service Configuration and selected by policy) |
 | No DNS record, no Service Authority selected, no trusted Federated options available | reject — MUST NOT return any authority |
@@ -574,7 +576,7 @@ Suggested status classes:
 
 - `400` malformed request or invalid email
 - `404` no enterprise authority and no trusted federated options
-- `403` enterprise precedence enforcement rejection (for example, discovery returns `none`)
+- `403` enterprise precedence enforcement rejection or Service policy rejection (for example, discovery returns `none`, or the Service requires its own authority but Enterprise policy disallows it)
 - `502` enterprise discovery configuration fetch/validation failure
 - `422` semantically invalid resolution request
 - `5xx` transient Service failure
@@ -1730,13 +1732,37 @@ All endpoints defined in this specification SHOULD return structured JSON error 
       },
       "oneOf": [
         {
-          "required": ["enterprise_authority"]
+          "required": ["enterprise_authority"],
+          "not": {
+            "anyOf": [
+              { "required": ["service_authority"] },
+              { "required": ["trusted_federated_authorities"] }
+            ]
+          }
         },
         {
-          "required": ["trusted_federated_authorities"]
+          "required": ["trusted_federated_authorities"],
+          "not": {
+            "anyOf": [
+              { "required": ["enterprise_authority"] },
+              { "required": ["service_authority"] }
+            ]
+          }
         },
         {
-          "required": ["service_authority"]
+          "required": ["service_authority"],
+          "not": {
+            "anyOf": [
+              { "required": ["enterprise_authority"] },
+              { "required": ["trusted_federated_authorities"] }
+            ]
+          }
+        },
+        {
+          "required": ["service_authority", "trusted_federated_authorities"],
+          "not": {
+            "required": ["enterprise_authority"]
+          }
         }
       ],
       "additionalProperties": true
@@ -2299,6 +2325,30 @@ All endpoints defined in this specification SHOULD return structured JSON error 
       {
         "authority": "https://claude-code.example.com",
         "authority_configuration_url": "https://claude-code.example.com/ap"
+      }
+    ]
+  }
+}
+```
+
+### `service-authority-resolution-service-or-federated.json` [#example-service-or-federated-resolution]
+
+```json
+{
+  "request": {
+    "user": {
+      "email": "alex@no-agentpass-domain.example"
+    }
+  },
+  "response": {
+    "service_authority": {
+      "authority": "https://api.example.com/agentpass",
+      "authority_configuration_url": "https://api.example.com/agentpass/ap"
+    },
+    "trusted_federated_authorities": [
+      {
+        "authority": "https://codex.example.com",
+        "authority_configuration_url": "https://codex.example.com/ap"
       }
     ]
   }

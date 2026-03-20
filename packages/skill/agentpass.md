@@ -50,8 +50,9 @@ curl -s -X POST {resolve_authorities_url} \
 
 This returns either:
 - `enterprise_authority` - use this authority
-- `trusted_federated_authorities` - ask the user which one to use
 - `service_authority` - use this authority
+- `trusted_federated_authorities` - ask the user which one to use
+- both `service_authority` and `trusted_federated_authorities` - choose one of the offered options, typically by asking the user which provider they prefer
 
 ### Step 3: Fetch Authority Configuration
 
