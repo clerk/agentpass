@@ -36,6 +36,15 @@ export interface AuthorityConfig {
   dnsResolver?: DnsResolver;
   /** Override service discovery for specific origins (bypasses DNS). Maps service origin → service configuration URL */
   serviceConfigOverrides?: Record<string, string>;
+  /** Trusted third-party issuers allowed to sign harness attestation JWTs */
+  trustedHarnessAttestationIssuers?: TrustedHarnessAttestationIssuer[];
+}
+
+export interface TrustedHarnessAttestationIssuer {
+  /** Attestation issuer identifier (`iss`) */
+  issuer: string;
+  /** Pinned JWKS URI for this attestation issuer */
+  jwksUri: string;
 }
 
 // ─── DNS ───
