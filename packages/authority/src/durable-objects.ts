@@ -227,10 +227,26 @@ export class DurableObjectsStorage implements AuthorityStorage {
     return this.indexStub.list(options);
   }
 
-  async consumeAgentPass(value: string): Promise<IssuanceRecord | null> {
+  async getAgentPassRecord(value: string): Promise<IssuanceRecord | null> {
     // Look up which record has this agentpass value
     const lookup = await this.indexStub.lookupByAgentPass(value);
     if (!lookup || lookup.consumed) return null;
+
+    const stub = this.getIssuanceStub(lookup.id);
+    const record = await stub.get();
+    if (!record) return null;
+    if (record.status !== 'approved') return null;
+    if (new Date(record.expiresAt) < new Date()) return null;
+    return record;
+  }
+
+  async consumeAgentPass(value: string, expectedServiceOrigin?: string): Promise<IssuanceRecord | null> {
+    const lookup = await this.indexStub.lookupByAgentPass(value);
+    if (!lookup || lookup.consumed) return null;
+
+    const preview = await this.getAgentPassRecord(value);
+    if (!preview) return null;
+    if (expectedServiceOrigin && preview.request.service.origin !== expectedServiceOrigin) return null;
 
     // Atomically consume in the IssuanceDO (single-threaded guarantee)
     const stub = this.getIssuanceStub(lookup.id);
