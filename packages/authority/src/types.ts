@@ -69,6 +69,7 @@ export interface IssuanceRecord {
   scope?: string[];
   agentpass?: { type: string; value: string };
   authorizationId?: string;
+  authorizationExpiresAt?: string;
   createdAt: string;
   expiresAt: string;
   pollAfterMs?: number;
@@ -109,6 +110,7 @@ export interface ValidationRequest {
 
 export interface ValidationResponse {
   authorization_id: string;
+  authorization_expires_at: string;
   user: { email: string };
   agent: { id: string };
   scope: string[];
@@ -130,6 +132,7 @@ export interface AuthorizationCheckRequest {
 
 export interface AuthorizationCheckResponse {
   scope: string[];
+  authorization_expires_at: string;
 }
 
 // ─── Scope ───

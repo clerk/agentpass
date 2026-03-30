@@ -260,6 +260,7 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
 
     const agentpassValue = decision.status === 'approved' ? generateAgentPassValue() : undefined;
     const authorizationId = decision.status === 'approved' ? generateId('authz') : undefined;
+    const authorizationExpiresAt = decision.status === 'approved' ? expiresAt.toISOString() : undefined;
 
     const record: IssuanceRecord = {
       id: requestId,
@@ -269,6 +270,7 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       scope: decision.scope || availableScopes.map(s => s.name),
       agentpass: agentpassValue ? { type: body.type, value: agentpassValue } : undefined,
       authorizationId,
+      authorizationExpiresAt,
       createdAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
       pollAfterMs: decision.status === 'pending' ? 2000 : undefined,
@@ -352,6 +354,7 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
 
     const response: ValidationResponse = {
       authorization_id: record.authorizationId!,
+      authorization_expires_at: getAuthorizationExpiry(record),
       user: { email: record.request.user.email },
       agent: { id: record.request.harness.id },
       scope: record.scope || [],
@@ -401,7 +404,10 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       return errorResponse(404, 'not_found', 'Unknown authorization_id or delegation revoked');
     }
 
-    return json({ scope: record.scope || [] });
+    return json({
+      scope: record.scope || [],
+      authorization_expires_at: getAuthorizationExpiry(record),
+    });
   }
 
   // ─── Dashboard API ───
@@ -448,10 +454,14 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
     };
 
     if (body.decision === 'approved') {
+      const ttlSeconds = config.approval?.defaultTtlSeconds || 300;
+      const approvalExpiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
       const apValue = generateAgentPassValue();
       const authzId = generateId('authz');
       updates.agentpass = { type: record.type, value: apValue };
       updates.authorizationId = authzId;
+      updates.authorizationExpiresAt = approvalExpiresAt;
+      updates.expiresAt = approvalExpiresAt;
       if (body.scope) {
         updates.scope = body.scope;
       }
@@ -516,6 +526,10 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
     }
 
     return response;
+  }
+
+  function getAuthorizationExpiry(record: IssuanceRecord): string {
+    return record.authorizationExpiresAt || record.expiresAt;
   }
 
   async function verifyServiceAssertion(jwt: string, serviceOrigin: string): Promise<void> {
