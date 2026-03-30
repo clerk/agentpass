@@ -531,7 +531,13 @@ async function fetchAuthorityConfig(configUrl: string): Promise<{
   authority: string;
   trust_mode: string;
   jwks_uri: string;
-  endpoints: { issuance: string; issuance_status: string; validate: string; authorization_check: string };
+  endpoints: {
+    issuance: string;
+    issuance_status: string;
+    validate: string;
+    authorization_check: string;
+    authorization_close: string;
+  };
   policy?: { allow_service_authorities?: boolean };
 }> {
   const response = await fetch(configUrl);

@@ -3,7 +3,7 @@
  * Production implementations should use Cloudflare KV, D1, or Durable Objects.
  */
 
-import type { AuthorityStorage, IssuanceRecord } from './types.js';
+import type { AuthorityStorage, AuthorizationCloseAction, AuthorizationStatus, IssuanceRecord } from './types.js';
 
 export class MemoryStorage implements AuthorityStorage {
   private records = new Map<string, IssuanceRecord>();
@@ -23,7 +23,9 @@ export class MemoryStorage implements AuthorityStorage {
 
   async getIssuanceRecord(id: string): Promise<IssuanceRecord | null> {
     const record = this.records.get(id);
-    return record ? structuredClone(record) : null;
+    if (!record) return null;
+    synchronizeAuthorizationExpiry(record);
+    return structuredClone(record);
   }
 
   async updateIssuanceRecord(id: string, updates: Partial<IssuanceRecord>): Promise<void> {
@@ -43,6 +45,9 @@ export class MemoryStorage implements AuthorityStorage {
 
   async listIssuanceRecords(options?: { status?: string; limit?: number; offset?: number }): Promise<IssuanceRecord[]> {
     let records = Array.from(this.records.values());
+    for (const record of records) {
+      synchronizeAuthorizationExpiry(record);
+    }
 
     if (options?.status) {
       records = records.filter(r => r.status === options.status);
@@ -67,7 +72,8 @@ export class MemoryStorage implements AuthorityStorage {
 
     // Check expiry
     if (new Date(record.expiresAt) < new Date()) return null;
-    if (new Date(getAuthorizationExpiry(record)) < new Date()) return null;
+    if (synchronizeAuthorizationExpiry(record)) return null;
+    if (getAuthorizationStatus(record) !== 'active') return null;
 
     // Atomically consume
     this.consumedPasses.add(value);
@@ -79,21 +85,30 @@ export class MemoryStorage implements AuthorityStorage {
     if (!id) return null;
     const record = this.records.get(id);
     if (!record) return null;
-    if (new Date(getAuthorizationExpiry(record)) < new Date()) {
-      this.authorizationIndex.delete(authorizationId);
-      return null;
-    }
+    synchronizeAuthorizationExpiry(record);
     return structuredClone(record);
   }
 
-  async revokeAuthorization(authorizationId: string): Promise<boolean> {
+  async closeAuthorization(
+    authorizationId: string,
+    action: AuthorizationCloseAction,
+    reason?: string,
+    closedAt = new Date().toISOString(),
+  ): Promise<IssuanceRecord | null> {
     const id = this.authorizationIndex.get(authorizationId);
-    if (!id) return false;
+    if (!id) return null;
     const record = this.records.get(id);
-    if (!record) return false;
-    record.status = 'canceled';
-    this.authorizationIndex.delete(authorizationId);
-    return true;
+    if (!record) return null;
+
+    synchronizeAuthorizationExpiry(record);
+    const authorizationStatus = getAuthorizationStatus(record);
+    if (authorizationStatus === 'active') {
+      record.authorizationStatus = action === 'complete' ? 'completed' : 'revoked';
+      record.authorizationClosedAt = closedAt;
+      record.authorizationClosureReason = reason;
+    }
+
+    return structuredClone(record);
   }
 }
 
@@ -118,7 +133,13 @@ export class KVStorage implements AuthorityStorage {
 
   async getIssuanceRecord(id: string): Promise<IssuanceRecord | null> {
     const data = await this.kv.get(`record:${id}`);
-    return data ? JSON.parse(data) : null;
+    if (!data) return null;
+
+    const record = JSON.parse(data) as IssuanceRecord;
+    if (synchronizeAuthorizationExpiry(record)) {
+      await this.kv.put(`record:${id}`, JSON.stringify(record), { expirationTtl: computeStorageTtlSeconds(record) });
+    }
+    return record;
   }
 
   async updateIssuanceRecord(id: string, updates: Partial<IssuanceRecord>): Promise<void> {
@@ -145,6 +166,9 @@ export class KVStorage implements AuthorityStorage {
       const data = await this.kv.get(key.name);
       if (data) {
         const record = JSON.parse(data) as IssuanceRecord;
+        if (synchronizeAuthorizationExpiry(record)) {
+          await this.kv.put(`record:${record.id}`, JSON.stringify(record), { expirationTtl: computeStorageTtlSeconds(record) });
+        }
         if (!options?.status || record.status === options.status) {
           records.push(record);
         }
@@ -166,7 +190,11 @@ export class KVStorage implements AuthorityStorage {
     const record = await this.getIssuanceRecord(id);
     if (!record || record.status !== 'approved') return null;
     if (new Date(record.expiresAt) < new Date()) return null;
-    if (new Date(getAuthorizationExpiry(record)) < new Date()) return null;
+    if (synchronizeAuthorizationExpiry(record)) {
+      await this.kv.put(`record:${id}`, JSON.stringify(record), { expirationTtl: computeStorageTtlSeconds(record) });
+      return null;
+    }
+    if (getAuthorizationStatus(record) !== 'active') return null;
 
     await this.kv.put(`consumed:${value}`, '1', { expirationTtl: 3600 });
     return record;
@@ -177,28 +205,58 @@ export class KVStorage implements AuthorityStorage {
     if (!id) return null;
     const record = await this.getIssuanceRecord(id);
     if (!record) return null;
-    if (new Date(getAuthorizationExpiry(record)) < new Date()) {
-      await this.kv.delete(`authz:${authorizationId}`);
-      return null;
+    if (synchronizeAuthorizationExpiry(record)) {
+      await this.kv.put(`record:${id}`, JSON.stringify(record), { expirationTtl: computeStorageTtlSeconds(record) });
     }
     return record;
   }
 
-  async revokeAuthorization(authorizationId: string): Promise<boolean> {
+  async closeAuthorization(
+    authorizationId: string,
+    action: AuthorizationCloseAction,
+    reason?: string,
+    closedAt = new Date().toISOString(),
+  ): Promise<IssuanceRecord | null> {
     const id = await this.kv.get(`authz:${authorizationId}`);
-    if (!id) return false;
-    await this.kv.delete(`authz:${authorizationId}`);
+    if (!id) return null;
     const record = await this.getIssuanceRecord(id);
-    if (record) {
-      record.status = 'canceled';
-      await this.kv.put(`record:${id}`, JSON.stringify(record));
+    if (!record) return null;
+
+    synchronizeAuthorizationExpiry(record);
+    if (getAuthorizationStatus(record) === 'active') {
+      record.authorizationStatus = action === 'complete' ? 'completed' : 'revoked';
+      record.authorizationClosedAt = closedAt;
+      record.authorizationClosureReason = reason;
+      await this.kv.put(`record:${id}`, JSON.stringify(record), { expirationTtl: computeStorageTtlSeconds(record) });
     }
-    return true;
+    return record;
   }
 }
 
 function getAuthorizationExpiry(record: IssuanceRecord): string {
   return record.authorizationExpiresAt || record.expiresAt;
+}
+
+function getAuthorizationStatus(record: IssuanceRecord): AuthorizationStatus {
+  if (record.authorizationStatus) {
+    return record.authorizationStatus;
+  }
+  if (record.authorizationId) {
+    return 'active';
+  }
+  return 'expired';
+}
+
+function synchronizeAuthorizationExpiry(record: IssuanceRecord): boolean {
+  if (
+    getAuthorizationStatus(record) === 'active'
+    && new Date(getAuthorizationExpiry(record)) < new Date()
+  ) {
+    record.authorizationStatus = 'expired';
+    record.authorizationClosedAt = record.authorizationClosedAt || getAuthorizationExpiry(record);
+    return true;
+  }
+  return getAuthorizationStatus(record) === 'expired';
 }
 
 function computeStorageTtlSeconds(record: IssuanceRecord): number {

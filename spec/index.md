@@ -699,9 +699,11 @@ Service SHOULD verify that the delegation is still active periodically by callin
 
 Services MUST treat `authorization_expires_at` returned by the Authority as the absolute upper bound for the delegation. Services MUST NOT keep browser sessions, bearer tokens, or any other delegated credentials valid beyond that timestamp.
 
-If the Authority returns `404` (delegation revoked or expired), Service MUST invalidate any sessions or tokens associated with the delegation and discard any cached authorization check result for that `authorization_id`.
+If the Authority returns `404` (delegation completed, revoked, or expired), Service MUST invalidate any sessions or tokens associated with the delegation and discard any cached authorization check result for that `authorization_id`.
 
 If the Authority is unreachable, Service SHOULD reject the request rather than allowing it to proceed without verification.
+
+When the Service knows delegated work has completed normally, or determines the delegation must terminate early, it SHOULD call the Authorization Close Endpoint (Section 5.5.2) for that `authorization_id`. `authorization_expires_at` is the maximum lifetime fallback for delegated credentials, not the preferred normal end-of-task signal when explicit closure is available.
 
 ### 4.5. Browser Session Authorization [#s-4-5]
 
@@ -1003,6 +1005,7 @@ For readability, this spec uses the following endpoint name variables derived fr
 - `{agentpass_issuance_status_url_template}` = `endpoints.issuance_status`
 - `{agentpass_validate_url}` = `endpoints.validate`
 - `{agentpass_authorization_check_url}` = `endpoints.authorization_check`
+- `{agentpass_authorization_close_url}` = `endpoints.authorization_close`
 
 #### Example Configuration (Non-Normative)
 
@@ -1016,7 +1019,8 @@ For readability, this spec uses the following endpoint name variables derived fr
     "issuance": "https://agentpass.example.com/requests",
     "issuance_status": "https://agentpass.example.com/requests/{id}",
     "validate": "https://agentpass.example.com/validate",
-    "authorization_check": "https://agentpass.example.com/authorization-check"
+    "authorization_check": "https://agentpass.example.com/authorization-check",
+    "authorization_close": "https://agentpass.example.com/authorization-close"
   },
   "policy": {
     "allow_service_authorities": true
@@ -1034,11 +1038,12 @@ For readability, this spec uses the following endpoint name variables derived fr
 - `authority` (required): HTTPS authority identifier used for trust decisions.
 - `trust_mode` (required): `"enterprise"`, `"federated"`, or `"service"`.
 - `jwks_uri` (required): JWKS URL used by Services to verify Authority JWT assertions (for example, at the Available Scopes endpoint).
-- `endpoints` (required): endpoints used by clients to create AgentPass requests, check their status, validate AgentPasses, and refresh scopes.
+- `endpoints` (required): endpoints used by clients to create AgentPass requests, check their status, validate AgentPasses, and manage active delegations.
 - `endpoints.issuance` (required): `POST` AgentPass creation endpoint.
 - `endpoints.issuance_status` (required): AgentPass status lookup URL template (includes `{id}`).
 - `endpoints.validate` (required): `POST` AgentPass validation endpoint.
 - `endpoints.authorization_check` (required): `POST` authorization check and delegation scope refresh endpoint.
+- `endpoints.authorization_close` (required): `POST` explicit delegation close endpoint used by Services to mark delegated work complete or revoke it early.
 - `policy` (optional): policy settings for this Authority.
 - `policy.allow_service_authorities` (optional, boolean, default `true`): when `false`, Services MUST NOT use a Service Authority for users of this Enterprise Authority's domain. Only meaningful when `trust_mode` is `"enterprise"`.
 - `approval` (optional): non-normative approval hints.
@@ -1243,13 +1248,22 @@ Suggested status classes:
 
 ### 5.5. Authorization Management [#s-5-5]
 
-The `authorization_id` returned by the Validation Endpoint (Section 5.4) is a durable handle representing an active delegation. Services use it to query the Authority for ongoing authorization decisions — checking whether a delegation is still valid, whether scopes have changed, and whether the delegation has been revoked.
+The `authorization_id` returned by the Validation Endpoint (Section 5.4) is a durable handle representing a delegation lifecycle managed by the Authority. Services use it to query the Authority for ongoing authorization decisions, explicitly close delegations, and detect whether scopes or authorization state have changed.
 
-This endpoint serves as the general re-authorization contract between Services and Authorities. Services SHOULD call this endpoint periodically for each active delegated session or bearer token to ensure the delegation remains valid (see Sections 4.5, 4.6).
+Delegations have the following lifecycle states:
+
+- `active`: the delegation is currently usable.
+- `completed`: the delegated task ended normally and the delegation has been explicitly closed.
+- `revoked`: the delegation was terminated early.
+- `expired`: the delegation outlived `authorization_expires_at` without an explicit close signal.
+
+This section serves as the general re-authorization and delegation lifecycle contract between Services and Authorities. Services SHOULD call the Authorization Check Endpoint periodically for each active delegated session or bearer token to ensure the delegation remains valid (see Sections 4.5, 4.6).
 
 Services MAY cache successful authorization check results briefly to reduce per-request latency. Services MUST NOT use expired cached results. Caching is intended for per-request latency reduction only — it does not replace periodic re-authorization.
 
-When a delegation is revoked — for example, because an employee is terminated, a compromise is detected, or an administrator withdraws approval — the Authority MUST return `404` for that `authorization_id`. Because Services check delegation validity periodically, revocation takes effect within the cache TTL window.
+Services SHOULD explicitly close delegations when they know a delegated task is done (`complete`) or must terminate (`revoke`). Time-based expiration remains the fallback when no explicit close signal is available.
+
+For protocol purposes, `completed`, `revoked`, and `expired` are all inactive terminal states. The Authority MUST return `404` from the Authorization Check Endpoint for any terminal state. Because Services check delegation validity periodically, completion or revocation takes effect within the cache TTL window.
 
 If the Authority is unreachable, Services SHOULD reject agent requests rather than allowing them to proceed without authorization verification.
 
@@ -1288,7 +1302,57 @@ Suggested status classes:
 
 - `400` malformed request
 - `401` invalid Service assertion
-- `404` unknown `authorization_id` or delegation revoked — Service MUST invalidate any sessions or tokens associated with this delegation
+- `404` unknown `authorization_id`, wrong Service for this delegation, or delegation inactive (`completed`, `revoked`, or `expired`) — Service MUST invalidate any sessions or tokens associated with this delegation
+
+#### 5.5.2. Authorization Close Endpoint [#s-5-5-2]
+
+Marks a delegation complete or revoked. Called by Services when delegated work is known to have finished or must be terminated early.
+
+Endpoint: `POST {agentpass_authorization_close_url}` (Section 5.2).
+
+Schema: `authority-authorization-close` (Appendix A).
+
+**Authentication**
+
+Service MUST authenticate using a signed JWT assertion with its keys (from Service `jwks_uri`), following the same pattern as the Validation Endpoint (Section 5.4).
+
+**Request**
+
+Service MUST send a JSON body containing:
+
+- `authorization_id` (string, required): the delegation identifier returned by the Validation Endpoint.
+- `action` (string, required): either `complete` or `revoke`.
+- `reason` (string, optional): free-form human-readable explanation for audit or debugging.
+
+`action = "complete"` indicates normal end-of-task completion. `action = "revoke"` indicates early termination.
+
+**Authority behavior**
+
+Authority MUST scope the request to the Service that originally redeemed the delegation. If the authenticated Service does not match the delegation's original Service, the Authority MUST NOT reveal whether the `authorization_id` exists.
+
+If the delegation is still `active`, the Authority MUST transition it to:
+
+- `completed` when `action = "complete"`
+- `revoked` when `action = "revoke"`
+
+If the delegation is already `completed` or `revoked`, the Authority MAY return the existing terminal state idempotently.
+
+If the delegation is already `expired`, the Authority SHOULD treat it as inactive and return `404`.
+
+**Response**
+
+On success, Authority MUST return JSON conforming to `authority-authorization-close` response schema, including:
+
+- `status` (string): `completed` or `revoked`
+- `closed_at` (string): timestamp when the delegation entered that terminal state
+
+**Errors**
+
+Suggested status classes:
+
+- `400` malformed request or invalid action
+- `401` invalid Service assertion
+- `404` unknown `authorization_id`, wrong Service for this delegation, or delegation already expired
 
 #### Error Responses
 
@@ -1341,7 +1405,8 @@ All endpoints defined in this specification SHOULD return structured JSON error 
         "issuance",
         "issuance_status",
         "validate",
-        "authorization_check"
+        "authorization_check",
+        "authorization_close"
       ],
       "properties": {
         "issuance": {
@@ -1357,6 +1422,10 @@ All endpoints defined in this specification SHOULD return structured JSON error 
           "pattern": "^https://"
         },
         "authorization_check": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "authorization_close": {
           "type": "string",
           "pattern": "^https://"
         }
@@ -2218,6 +2287,52 @@ All endpoints defined in this specification SHOULD return structured JSON error 
 }
 ```
 
+### `authority-authorization-close.schema.json` [#schema-authority-authorization-close]
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Authority Authorization Close Request/Response",
+  "type": "object",
+  "properties": {
+    "request": {
+      "type": "object",
+      "required": ["authorization_id", "action"],
+      "properties": {
+        "authorization_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "type": "string",
+          "enum": ["complete", "revoke"]
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "response": {
+      "type": "object",
+      "required": ["status", "closed_at"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["completed", "revoked"]
+        },
+        "closed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
+```
+
 ### `error-response.schema.json` [#schema-error-response]
 
 ```json
@@ -2423,6 +2538,22 @@ All endpoints defined in this specification SHOULD return structured JSON error 
   "response": {
     "scope": ["dashboard:view", "tickets:read", "tickets:comment"],
     "authorization_expires_at": "2025-01-15T13:00:00Z"
+  }
+}
+```
+
+### `authority-authorization-close.json` [#example-authority-authorization-close]
+
+```json
+{
+  "request": {
+    "authorization_id": "authz_a1b2c3d4e5f6",
+    "action": "complete",
+    "reason": "Task finished successfully"
+  },
+  "response": {
+    "status": "completed",
+    "closed_at": "2025-01-15T12:42:11Z"
   }
 }
 ```
