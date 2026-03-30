@@ -60,6 +60,9 @@ describe('MemoryStorage', () => {
     const record = makeRecord({
       status: 'approved',
       agentpass: { type: 'bearer_token', value: 'ap_test123' },
+      authorizationId: 'authz_consume',
+      authorizationExpiresAt: new Date(Date.now() + 300000).toISOString(),
+      authorizationStatus: 'active',
     });
     await storage.createIssuanceRecord(record);
 
@@ -82,6 +85,9 @@ describe('MemoryStorage', () => {
       status: 'approved',
       agentpass: { type: 'bearer_token', value: 'ap_expired' },
       expiresAt: new Date(Date.now() - 1000).toISOString(),
+      authorizationId: 'authz_expired_agentpass',
+      authorizationExpiresAt: new Date(Date.now() + 300000).toISOString(),
+      authorizationStatus: 'active',
     });
     await storage.createIssuanceRecord(record);
 
@@ -95,6 +101,7 @@ describe('MemoryStorage', () => {
       agentpass: { type: 'bearer_token', value: 'ap_auth_expired' },
       expiresAt: new Date(Date.now() + 300000).toISOString(),
       authorizationExpiresAt: new Date(Date.now() - 1000).toISOString(),
+      authorizationStatus: 'active',
     });
     await storage.createIssuanceRecord(record);
 
@@ -107,6 +114,7 @@ describe('MemoryStorage', () => {
       status: 'approved',
       authorizationId: 'authz_001',
       authorizationExpiresAt: new Date(Date.now() + 300000).toISOString(),
+      authorizationStatus: 'active',
     });
     await storage.createIssuanceRecord(record);
 
@@ -115,34 +123,80 @@ describe('MemoryStorage', () => {
     expect(authz!.authorizationId).toBe('authz_001');
   });
 
-  it('rejects expired authorization records even when the issuance record still exists', async () => {
+  it('marks expired authorization records even when the issuance record still exists', async () => {
     const record = makeRecord({
       status: 'approved',
       authorizationId: 'authz_001',
       authorizationExpiresAt: new Date(Date.now() - 1000).toISOString(),
       expiresAt: new Date(Date.now() + 300000).toISOString(),
+      authorizationStatus: 'active',
     });
     await storage.createIssuanceRecord(record);
 
     const authz = await storage.getAuthorizationRecord('authz_001');
-    expect(authz).toBeNull();
+    expect(authz).toBeDefined();
+    expect(authz!.authorizationStatus).toBe('expired');
 
     const issuanceRecord = await storage.getIssuanceRecord('req_001');
     expect(issuanceRecord).toBeDefined();
+    expect(issuanceRecord!.authorizationStatus).toBe('expired');
   });
 
-  it('revokes authorizations', async () => {
+  it('synchronizes expired authorization status when listing issuance records', async () => {
+    const record = makeRecord({
+      status: 'approved',
+      authorizationId: 'authz_001',
+      authorizationExpiresAt: new Date(Date.now() - 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 300000).toISOString(),
+      authorizationStatus: 'active',
+    });
+    await storage.createIssuanceRecord(record);
+
+    const listed = await storage.listIssuanceRecords();
+    expect(listed).toHaveLength(1);
+    expect(listed[0].authorizationStatus).toBe('expired');
+
+    const issuanceRecord = await storage.getIssuanceRecord('req_001');
+    expect(issuanceRecord!.authorizationStatus).toBe('expired');
+  });
+
+  it('revokes authorizations without changing the issuance status', async () => {
     const record = makeRecord({
       status: 'approved',
       authorizationId: 'authz_001',
       authorizationExpiresAt: new Date(Date.now() + 300000).toISOString(),
+      authorizationStatus: 'active',
     });
     await storage.createIssuanceRecord(record);
 
-    const revoked = await storage.revokeAuthorization('authz_001');
-    expect(revoked).toBe(true);
+    const revoked = await storage.closeAuthorization('authz_001', 'revoke', 'task aborted');
+    expect(revoked).toBeDefined();
+    expect(revoked!.authorizationStatus).toBe('revoked');
+    expect(revoked!.authorizationClosureReason).toBe('task aborted');
 
     const authz = await storage.getAuthorizationRecord('authz_001');
-    expect(authz).toBeNull();
+    expect(authz).toBeDefined();
+    expect(authz!.authorizationStatus).toBe('revoked');
+
+    const issuanceRecord = await storage.getIssuanceRecord('req_001');
+    expect(issuanceRecord!.status).toBe('approved');
+  });
+
+  it('completes authorizations idempotently', async () => {
+    const record = makeRecord({
+      status: 'approved',
+      authorizationId: 'authz_001',
+      authorizationExpiresAt: new Date(Date.now() + 300000).toISOString(),
+      authorizationStatus: 'active',
+    });
+    await storage.createIssuanceRecord(record);
+
+    const completed = await storage.closeAuthorization('authz_001', 'complete');
+    expect(completed).toBeDefined();
+    expect(completed!.authorizationStatus).toBe('completed');
+
+    const repeated = await storage.closeAuthorization('authz_001', 'revoke');
+    expect(repeated).toBeDefined();
+    expect(repeated!.authorizationStatus).toBe('completed');
   });
 });

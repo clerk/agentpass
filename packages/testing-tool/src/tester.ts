@@ -240,7 +240,7 @@ export async function testAuthority(url: string): Promise<TestSuiteResult> {
 
     // Test endpoints
     const endpoints = config.endpoints as Record<string, string> | undefined;
-    const requiredEndpoints = ['issuance', 'issuance_status', 'validate', 'authorization_check'];
+    const requiredEndpoints = ['issuance', 'issuance_status', 'validate', 'authorization_check', 'authorization_close'];
     for (const ep of requiredEndpoints) {
       tests.push({
         name: `Endpoint "${ep}" present`,

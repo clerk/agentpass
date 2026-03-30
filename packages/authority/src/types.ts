@@ -70,6 +70,9 @@ export interface IssuanceRecord {
   agentpass?: { type: string; value: string };
   authorizationId?: string;
   authorizationExpiresAt?: string;
+  authorizationStatus?: AuthorizationStatus;
+  authorizationClosedAt?: string;
+  authorizationClosureReason?: string;
   createdAt: string;
   expiresAt: string;
   pollAfterMs?: number;
@@ -135,6 +138,21 @@ export interface AuthorizationCheckResponse {
   authorization_expires_at: string;
 }
 
+export type AuthorizationStatus = 'active' | 'completed' | 'revoked' | 'expired';
+
+export type AuthorizationCloseAction = 'complete' | 'revoke';
+
+export interface AuthorizationCloseRequest {
+  authorization_id: string;
+  action: AuthorizationCloseAction;
+  reason?: string;
+}
+
+export interface AuthorizationCloseResponse {
+  status: Exclude<AuthorizationStatus, 'active' | 'expired'>;
+  closed_at: string;
+}
+
 // ─── Scope ───
 
 export interface ScopeItem {
@@ -164,7 +182,12 @@ export interface AuthorityStorage {
   listIssuanceRecords(options?: { status?: string; limit?: number; offset?: number }): Promise<IssuanceRecord[]>;
   consumeAgentPass(value: string): Promise<IssuanceRecord | null>;
   getAuthorizationRecord(authorizationId: string): Promise<IssuanceRecord | null>;
-  revokeAuthorization(authorizationId: string): Promise<boolean>;
+  closeAuthorization(
+    authorizationId: string,
+    action: AuthorizationCloseAction,
+    reason?: string,
+    closedAt?: string,
+  ): Promise<IssuanceRecord | null>;
 }
 
 // ─── Error ───

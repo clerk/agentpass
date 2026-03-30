@@ -6,6 +6,9 @@
 import type {
   AuthorityConfig,
   AuthorityStorage,
+  AuthorizationCloseRequest,
+  AuthorizationCloseResponse,
+  AuthorizationStatus,
   IssuanceRequest,
   IssuanceRecord,
   IssuanceStatusResponse,
@@ -63,6 +66,11 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       return handleAuthorizationCheck(request);
     }
 
+    // Authorization close endpoint (POST)
+    if (request.method === 'POST' && path === `${basePath}/authorization-close`) {
+      return handleAuthorizationClose(request);
+    }
+
     // ─── Dashboard API endpoints (protected by JWT auth) ───
 
     // List issuance records
@@ -95,6 +103,7 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
         issuance_status: `${origin}${basePath}/requests/{id}`,
         validate: `${origin}${basePath}/validate`,
         authorization_check: `${origin}${basePath}/authorization-check`,
+        authorization_close: `${origin}${basePath}/authorization-close`,
       },
       ...(config.policy && {
         policy: {
@@ -271,6 +280,7 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       agentpass: agentpassValue ? { type: body.type, value: agentpassValue } : undefined,
       authorizationId,
       authorizationExpiresAt,
+      authorizationStatus: decision.status === 'approved' ? 'active' : undefined,
       createdAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
       pollAfterMs: decision.status === 'pending' ? 2000 : undefined,
@@ -372,20 +382,9 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
   }
 
   async function handleAuthorizationCheck(request: Request): Promise<Response> {
-    // Verify Service assertion
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
-      return errorResponse(401, 'missing_assertion', 'Authorization header with Bearer assertion required');
-    }
-
-    try {
-      const payload = decodeJwtPayload(authHeader.slice(7));
-      if (payload.aud !== config.authority) {
-        return errorResponse(401, 'invalid_assertion', 'Assertion audience does not match');
-      }
-      await verifyServiceAssertion(authHeader.slice(7), payload.iss as string);
-    } catch (e) {
-      return errorResponse(401, 'invalid_assertion', `Assertion verification failed: ${(e as Error).message}`);
+    const authentication = await authenticateServiceRequest(request);
+    if ('error' in authentication) {
+      return authentication.error;
     }
 
     let body: { authorization_id: string };
@@ -400,7 +399,10 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
     }
 
     const record = await storage.getAuthorizationRecord(body.authorization_id);
-    if (!record || record.status !== 'approved') {
+    if (!record || record.request.service.origin !== authentication.serviceOrigin) {
+      return errorResponse(404, 'not_found', 'Unknown authorization_id or delegation revoked');
+    }
+    if (!isAuthorizationActive(record)) {
       return errorResponse(404, 'not_found', 'Unknown authorization_id or delegation revoked');
     }
 
@@ -408,6 +410,64 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       scope: record.scope || [],
       authorization_expires_at: getAuthorizationExpiry(record),
     });
+  }
+
+  async function handleAuthorizationClose(request: Request): Promise<Response> {
+    const authentication = await authenticateServiceRequest(request);
+    if ('error' in authentication) {
+      return authentication.error;
+    }
+
+    let body: AuthorizationCloseRequest;
+    try {
+      body = await request.json() as AuthorizationCloseRequest;
+    } catch {
+      return errorResponse(400, 'invalid_request', 'Invalid JSON body');
+    }
+
+    if (!body.authorization_id) {
+      return errorResponse(400, 'missing_field', 'authorization_id is required');
+    }
+    if (!body.action || !['complete', 'revoke'].includes(body.action)) {
+      return errorResponse(400, 'invalid_action', 'action must be complete or revoke');
+    }
+
+    const record = await storage.getAuthorizationRecord(body.authorization_id);
+    if (!record || record.request.service.origin !== authentication.serviceOrigin) {
+      return errorResponse(404, 'not_found', 'Unknown authorization_id or delegation revoked');
+    }
+
+    const authorizationStatus = getAuthorizationStatus(record);
+    if (authorizationStatus === 'expired') {
+      return errorResponse(404, 'not_found', 'Unknown authorization_id or delegation revoked');
+    }
+
+    if (authorizationStatus === 'completed' || authorizationStatus === 'revoked') {
+      const response: AuthorizationCloseResponse = {
+        status: authorizationStatus,
+        closed_at: record.authorizationClosedAt || getAuthorizationExpiry(record),
+      };
+      return json(response);
+    }
+
+    const closedRecord = await storage.closeAuthorization(
+      body.authorization_id,
+      body.action,
+      body.reason,
+    );
+    if (!closedRecord) {
+      return errorResponse(404, 'not_found', 'Unknown authorization_id or delegation revoked');
+    }
+    const closedStatus = getAuthorizationStatus(closedRecord);
+    if (closedStatus === 'expired') {
+      return errorResponse(404, 'not_found', 'Unknown authorization_id or delegation revoked');
+    }
+
+    const response: AuthorizationCloseResponse = {
+      status: closedStatus as AuthorizationCloseResponse['status'],
+      closed_at: closedRecord.authorizationClosedAt || new Date().toISOString(),
+    };
+    return json(response);
   }
 
   // ─── Dashboard API ───
@@ -461,6 +521,9 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       updates.agentpass = { type: record.type, value: apValue };
       updates.authorizationId = authzId;
       updates.authorizationExpiresAt = approvalExpiresAt;
+      updates.authorizationStatus = 'active';
+      updates.authorizationClosedAt = undefined;
+      updates.authorizationClosureReason = undefined;
       updates.expiresAt = approvalExpiresAt;
       if (body.scope) {
         updates.scope = body.scope;
@@ -484,12 +547,16 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       return errorResponse(400, 'invalid_request', 'Invalid JSON body');
     }
 
-    const success = await storage.revokeAuthorization(body.authorization_id);
-    if (!success) {
+    const record = await storage.closeAuthorization(body.authorization_id, 'revoke');
+    if (!record) {
       return errorResponse(404, 'not_found', 'Authorization not found');
     }
 
-    return json({ revoked: true });
+    return json({
+      status: getAuthorizationStatus(record),
+      ...(record.authorizationClosedAt && { closed_at: record.authorizationClosedAt }),
+      ...(record.authorizationClosureReason && { reason: record.authorizationClosureReason }),
+    });
   }
 
   // ─── Helpers ───
@@ -530,6 +597,57 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
 
   function getAuthorizationExpiry(record: IssuanceRecord): string {
     return record.authorizationExpiresAt || record.expiresAt;
+  }
+
+  function getAuthorizationStatus(record: IssuanceRecord): AuthorizationStatus {
+    if (record.authorizationStatus) {
+      return record.authorizationStatus;
+    }
+    if (
+      record.authorizationId
+      && record.status === 'approved'
+      && new Date(getAuthorizationExpiry(record)) >= new Date()
+    ) {
+      return 'active';
+    }
+    return 'expired';
+  }
+
+  function isAuthorizationActive(record: IssuanceRecord): boolean {
+    return getAuthorizationStatus(record) === 'active';
+  }
+
+  async function authenticateServiceRequest(
+    request: Request,
+  ): Promise<{ serviceOrigin: string } | { error: Response }> {
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return {
+        error: errorResponse(401, 'missing_assertion', 'Authorization header with Bearer assertion required'),
+      };
+    }
+
+    const assertionJwt = authHeader.slice(7);
+    try {
+      const payload = decodeJwtPayload(assertionJwt);
+      const serviceOrigin = payload.iss as string;
+      if (payload.aud !== config.authority) {
+        return {
+          error: errorResponse(401, 'invalid_assertion', 'Assertion audience does not match this authority'),
+        };
+      }
+      if (payload.exp && (payload.exp as number) < Math.floor(Date.now() / 1000)) {
+        return {
+          error: errorResponse(401, 'expired_assertion', 'Assertion has expired'),
+        };
+      }
+      await verifyServiceAssertion(assertionJwt, serviceOrigin);
+      return { serviceOrigin };
+    } catch (e) {
+      return {
+        error: errorResponse(401, 'invalid_assertion', `Assertion verification failed: ${(e as Error).message}`),
+      };
+    }
   }
 
   async function verifyServiceAssertion(jwt: string, serviceOrigin: string): Promise<void> {

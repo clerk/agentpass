@@ -381,6 +381,7 @@ function mockAuthorityValidation(overrides: Partial<AuthorityValidationResponse>
           issuance_status: 'https://authority.example.com/requests/{id}',
           validate: 'https://authority.example.com/validate',
           authorization_check: 'https://authority.example.com/authorization-check',
+          authorization_close: 'https://authority.example.com/authorization-close',
         },
       }), {
         status: 200,

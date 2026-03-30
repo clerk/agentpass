@@ -10,7 +10,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
-import type { AuthorityStorage, IssuanceRecord } from './types.js';
+import type { AuthorityStorage, AuthorizationCloseAction, AuthorizationStatus, IssuanceRecord } from './types.js';
 
 /**
  * Durable Object that stores a single issuance record.
@@ -44,19 +44,33 @@ export class IssuanceDO extends DurableObject {
     if (!record) return null;
     if (record.status !== 'approved') return null;
     if (new Date(record.expiresAt) < new Date()) return null;
+    if (synchronizeAuthorizationExpiry(record)) {
+      await this.ctx.storage.put('record', record);
+      return null;
+    }
+    if (getAuthorizationStatus(record) !== 'active') return null;
 
     await this.ctx.storage.put('consumed', true);
     return record;
   }
 
-  /** Revoke the authorization. Returns true if the record existed and was updated. */
-  async revoke(): Promise<boolean> {
+  /** Close the authorization. Returns the updated record when present. */
+  async closeAuthorization(
+    action: AuthorizationCloseAction,
+    reason?: string,
+    closedAt = new Date().toISOString(),
+  ): Promise<IssuanceRecord | null> {
     const record = await this.ctx.storage.get<IssuanceRecord>('record');
-    if (!record) return false;
+    if (!record) return null;
 
-    record.status = 'canceled';
+    synchronizeAuthorizationExpiry(record);
+    if (getAuthorizationStatus(record) === 'active') {
+      record.authorizationStatus = action === 'complete' ? 'completed' : 'revoked';
+      record.authorizationClosedAt = closedAt;
+      record.authorizationClosureReason = reason;
+    }
     await this.ctx.storage.put('record', record);
-    return true;
+    return record;
   }
 }
 
@@ -205,7 +219,15 @@ export class DurableObjectsStorage implements AuthorityStorage {
 
   async getIssuanceRecord(id: string): Promise<IssuanceRecord | null> {
     const stub = this.getIssuanceStub(id);
-    return stub.get();
+    const record = await stub.get();
+    if (!record) return null;
+    if (synchronizeAuthorizationExpiry(record)) {
+      await this.updateIssuanceRecord(id, {
+        authorizationStatus: record.authorizationStatus,
+        authorizationClosedAt: record.authorizationClosedAt,
+      });
+    }
+    return record;
   }
 
   async updateIssuanceRecord(id: string, updates: Partial<IssuanceRecord>): Promise<void> {
@@ -224,7 +246,16 @@ export class DurableObjectsStorage implements AuthorityStorage {
   }
 
   async listIssuanceRecords(options?: { status?: string; limit?: number; offset?: number }): Promise<IssuanceRecord[]> {
-    return this.indexStub.list(options);
+    const records = await this.indexStub.list(options);
+    await Promise.all(records.map(async record => {
+      if (synchronizeAuthorizationExpiry(record)) {
+        await this.updateIssuanceRecord(record.id, {
+          authorizationStatus: record.authorizationStatus,
+          authorizationClosedAt: record.authorizationClosedAt,
+        });
+      }
+    }));
+    return records;
   }
 
   async consumeAgentPass(value: string): Promise<IssuanceRecord | null> {
@@ -245,25 +276,59 @@ export class DurableObjectsStorage implements AuthorityStorage {
   async getAuthorizationRecord(authorizationId: string): Promise<IssuanceRecord | null> {
     const id = await this.indexStub.lookupByAuthorizationId(authorizationId);
     if (!id) return null;
-    return this.getIssuanceRecord(id);
+    const record = await this.getIssuanceRecord(id);
+    if (!record) return null;
+    if (synchronizeAuthorizationExpiry(record)) {
+      await this.updateIssuanceRecord(id, {
+        authorizationStatus: record.authorizationStatus,
+        authorizationClosedAt: record.authorizationClosedAt,
+      });
+    }
+    return record;
   }
 
-  async revokeAuthorization(authorizationId: string): Promise<boolean> {
+  async closeAuthorization(
+    authorizationId: string,
+    action: AuthorizationCloseAction,
+    reason?: string,
+    closedAt?: string,
+  ): Promise<IssuanceRecord | null> {
     const id = await this.indexStub.lookupByAuthorizationId(authorizationId);
-    if (!id) return false;
+    if (!id) return null;
 
     const stub = this.getIssuanceStub(id);
-    const revoked = await stub.revoke();
-    if (!revoked) return false;
+    const record = await stub.closeAuthorization(action, reason, closedAt);
+    if (!record) return null;
 
-    // Update index: remove authorization mapping and update status
-    const record = await stub.get();
     await this.indexStub.updateIndex(id, {
-      status: 'canceled',
-      authorization_id: undefined,
-      data: record ? JSON.stringify(record) : undefined,
+      data: JSON.stringify(record),
     });
-    await this.indexStub.removeAuthorizationId(authorizationId);
+    return record;
+  }
+}
+
+function getAuthorizationStatus(record: IssuanceRecord): AuthorizationStatus {
+  if (record.authorizationStatus) {
+    return record.authorizationStatus;
+  }
+  if (record.authorizationId) {
+    return 'active';
+  }
+  return 'expired';
+}
+
+function getAuthorizationExpiry(record: IssuanceRecord): string {
+  return record.authorizationExpiresAt || record.expiresAt;
+}
+
+function synchronizeAuthorizationExpiry(record: IssuanceRecord): boolean {
+  if (
+    getAuthorizationStatus(record) === 'active'
+    && new Date(getAuthorizationExpiry(record)) < new Date()
+  ) {
+    record.authorizationStatus = 'expired';
+    record.authorizationClosedAt = record.authorizationClosedAt || getAuthorizationExpiry(record);
     return true;
   }
+  return getAuthorizationStatus(record) === 'expired';
 }

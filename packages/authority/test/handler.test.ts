@@ -65,6 +65,7 @@ describe('Authority Handler', () => {
       expect(body.jwks_uri).toBe('https://authority.example.com/agentpass-authority/jwks.json');
       expect((body.endpoints as Record<string, string>).issuance).toContain('/requests');
       expect((body.endpoints as Record<string, string>).validate).toContain('/validate');
+      expect((body.endpoints as Record<string, string>).authorization_close).toContain('/authorization-close');
     });
   });
 
@@ -197,6 +198,26 @@ describe('Authority Handler', () => {
       expect(body.requests.length).toBeGreaterThan(0);
     });
 
+    it('synchronizes expired authorization state when listing requests', async () => {
+      await storage.createIssuanceRecord(makeValidationRecord({
+        id: 'req_expired_dashboard',
+        authorizationId: 'authz_expired_dashboard',
+        authorizationExpiresAt: new Date(Date.now() - 1000).toISOString(),
+        expiresAt: new Date(Date.now() + 300000).toISOString(),
+        authorizationStatus: 'active',
+      }));
+
+      const listReq = new Request('https://authority.example.com/agentpass-authority/api/requests', {
+        headers: { Authorization: 'Bearer test-token' },
+      });
+      const res = await handler(listReq);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as { requests: IssuanceRecord[] };
+      expect(body.requests).toHaveLength(1);
+      expect(body.requests[0].authorizationStatus).toBe('expired');
+    });
+
     it('approves a pending request via decision API', async () => {
       // Create a request
       const createReq = new Request('https://authority.example.com/agentpass-authority/requests', {
@@ -246,6 +267,30 @@ describe('Authority Handler', () => {
 
       const body = await res.json() as Record<string, unknown>;
       expect(body.status).toBe('denied');
+    });
+
+    it('returns the existing terminal status when dashboard revoke targets a completed authorization', async () => {
+      await storage.createIssuanceRecord(makeValidationRecord({
+        id: 'req_dashboard_complete',
+        authorizationId: 'authz_dashboard_complete',
+        authorizationStatus: 'completed',
+        authorizationClosedAt: new Date().toISOString(),
+      }));
+
+      const revokeReq = new Request('https://authority.example.com/agentpass-authority/api/revoke', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-token',
+        },
+        body: JSON.stringify({ authorization_id: 'authz_dashboard_complete' }),
+      });
+
+      const res = await handler(revokeReq);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as { status: string };
+      expect(body.status).toBe('completed');
     });
   });
 
@@ -340,6 +385,136 @@ describe('Authority Handler', () => {
       const expiredRes = await authorityHandler(expiredReq);
       expect(expiredRes.status).toBe(404);
     });
+
+    it('completes an active authorization and makes authorization check return 404 afterwards', async () => {
+      const serviceKeys = await generateEcJwkPair();
+      mockServiceDiscovery(serviceKeys.publicJwk);
+      const authorityHandler = createAuthorityHandler(
+        {
+          ...testConfig,
+          serviceConfigOverrides: {
+            'https://service.example.com': 'https://service.example.com/config.json',
+          },
+        },
+        storage,
+      );
+
+      await storage.createIssuanceRecord(makeValidationRecord({
+        id: 'req_complete',
+        authorizationId: 'authz_complete',
+        authorizationStatus: 'active',
+      }));
+
+      const closeReq = new Request('https://authority.example.com/agentpass-authority/authorization-close', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await signServiceAssertion(serviceKeys.privateJwk)}`,
+        },
+        body: JSON.stringify({ authorization_id: 'authz_complete', action: 'complete' }),
+      });
+
+      const closeRes = await authorityHandler(closeReq);
+      expect(closeRes.status).toBe(200);
+      const closeBody = await closeRes.json() as { status: string; closed_at: string };
+      expect(closeBody.status).toBe('completed');
+      expect(closeBody.closed_at).toBeDefined();
+
+      const checkReq = new Request('https://authority.example.com/agentpass-authority/authorization-check', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await signServiceAssertion(serviceKeys.privateJwk)}`,
+        },
+        body: JSON.stringify({ authorization_id: 'authz_complete' }),
+      });
+
+      const checkRes = await authorityHandler(checkReq);
+      expect(checkRes.status).toBe(404);
+    });
+
+    it('returns the existing terminal status when authorization-close is called repeatedly', async () => {
+      const serviceKeys = await generateEcJwkPair();
+      mockServiceDiscovery(serviceKeys.publicJwk);
+      const authorityHandler = createAuthorityHandler(
+        {
+          ...testConfig,
+          serviceConfigOverrides: {
+            'https://service.example.com': 'https://service.example.com/config.json',
+          },
+        },
+        storage,
+      );
+
+      await storage.createIssuanceRecord(makeValidationRecord({
+        id: 'req_revoke',
+        authorizationId: 'authz_revoke',
+        authorizationStatus: 'active',
+      }));
+
+      const firstReq = new Request('https://authority.example.com/agentpass-authority/authorization-close', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await signServiceAssertion(serviceKeys.privateJwk)}`,
+        },
+        body: JSON.stringify({ authorization_id: 'authz_revoke', action: 'revoke', reason: 'task aborted' }),
+      });
+
+      const firstRes = await authorityHandler(firstReq);
+      expect(firstRes.status).toBe(200);
+      const firstBody = await firstRes.json() as { status: string; closed_at: string };
+      expect(firstBody.status).toBe('revoked');
+
+      const secondReq = new Request('https://authority.example.com/agentpass-authority/authorization-close', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await signServiceAssertion(serviceKeys.privateJwk)}`,
+        },
+        body: JSON.stringify({ authorization_id: 'authz_revoke', action: 'complete' }),
+      });
+
+      const secondRes = await authorityHandler(secondReq);
+      expect(secondRes.status).toBe(200);
+      const secondBody = await secondRes.json() as { status: string; closed_at: string };
+      expect(secondBody.status).toBe('revoked');
+      expect(secondBody.closed_at).toBe(firstBody.closed_at);
+    });
+
+    it('returns 404 when a different service tries to close the authorization', async () => {
+      const serviceKeys = await generateEcJwkPair();
+      mockServiceDiscovery(serviceKeys.publicJwk, 'https://other-service.example.com');
+      const authorityHandler = createAuthorityHandler(
+        {
+          ...testConfig,
+          serviceConfigOverrides: {
+            'https://other-service.example.com': 'https://other-service.example.com/config.json',
+          },
+        },
+        storage,
+      );
+
+      await storage.createIssuanceRecord(makeValidationRecord({
+        id: 'req_scope',
+        authorizationId: 'authz_scope',
+        authorizationStatus: 'active',
+      }));
+
+      const closeReq = new Request('https://authority.example.com/agentpass-authority/authorization-close', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${await signServiceAssertion(serviceKeys.privateJwk, {
+            serviceOrigin: 'https://other-service.example.com',
+          })}`,
+        },
+        body: JSON.stringify({ authorization_id: 'authz_scope', action: 'revoke' }),
+      });
+
+      const closeRes = await authorityHandler(closeReq);
+      expect(closeRes.status).toBe(404);
+    });
   });
 
   describe('404 for unknown routes', () => {
@@ -367,6 +542,7 @@ function makeValidationRecord(overrides: Partial<IssuanceRecord> = {}): Issuance
     agentpass: { type: 'bearer_token', value: 'ap_default' },
     authorizationId: 'authz_default',
     authorizationExpiresAt: new Date(Date.now() + 300000).toISOString(),
+    authorizationStatus: 'active',
     createdAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 300000).toISOString(),
     ...overrides,
@@ -386,7 +562,7 @@ async function generateEcJwkPair(): Promise<{ privateJwk: JsonWebKey; publicJwk:
   };
 }
 
-function mockServiceDiscovery(servicePublicJwk: JsonWebKey) {
+function mockServiceDiscovery(servicePublicJwk: JsonWebKey, serviceOrigin = 'https://service.example.com') {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = typeof input === 'string'
       ? input
@@ -394,14 +570,14 @@ function mockServiceDiscovery(servicePublicJwk: JsonWebKey) {
         ? input.toString()
         : input.url;
 
-    if (url === 'https://service.example.com/config.json') {
-      return new Response(JSON.stringify({ jwks_uri: 'https://service.example.com/jwks.json' }), {
+    if (url === `${serviceOrigin}/config.json`) {
+      return new Response(JSON.stringify({ jwks_uri: `${serviceOrigin}/jwks.json` }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    if (url === 'https://service.example.com/jwks.json') {
+    if (url === `${serviceOrigin}/jwks.json`) {
       return new Response(JSON.stringify({ keys: [servicePublicJwk] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -415,16 +591,23 @@ function mockServiceDiscovery(servicePublicJwk: JsonWebKey) {
   return fetchMock;
 }
 
-async function signServiceAssertion(privateJwk: JsonWebKey): Promise<string> {
+async function signServiceAssertion(
+  privateJwk: JsonWebKey,
+  options?: {
+    serviceOrigin?: string;
+    audience?: string;
+    exp?: number;
+  },
+): Promise<string> {
   const signingKey = await importSigningKey(privateJwk);
   const now = Math.floor(Date.now() / 1000);
 
   return signJwt(
     {
-      iss: 'https://service.example.com',
-      aud: 'https://authority.example.com',
+      iss: options?.serviceOrigin || 'https://service.example.com',
+      aud: options?.audience || 'https://authority.example.com',
       iat: now,
-      exp: now + 60,
+      exp: options?.exp || now + 60,
     },
     signingKey,
     'service-key-1',
