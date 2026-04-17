@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createServiceHandler } from '../src/handler.js';
-import type { ServiceConfig } from '../src/types.js';
+import type { ServiceConfig, AuthorityValidationResponse } from '../src/types.js';
 import { importSigningKey, signJwt } from '../src/crypto.js';
 
 const testPrivateKey: JsonWebKey = {
@@ -48,7 +48,9 @@ describe('Service Handler', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('GET /agentpass-service/config.json (configuration)', () => {
@@ -403,6 +405,7 @@ describe('Service Handler', () => {
           expect(init?.method).toBe('POST');
           return new Response(JSON.stringify({
             authorization_id: 'authz_123',
+            authorization_expires_at: new Date(Date.now() + 300000).toISOString(),
             user: { email: 'alex@example.com' },
             agent: { id: 'agent:test' },
             scope: ['read'],
@@ -449,6 +452,105 @@ describe('Service Handler', () => {
       const res = await handler(req);
       expect(res.status).toBe(400);
     });
+
+    it('passes authorization expiry to the redemption handler and caps expires_in', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-18T15:00:00.000Z'));
+
+      const authorizationExpiresAt = '2026-03-18T15:01:30.000Z';
+      const signingKey = await generateEcPrivateJwk();
+      mockAuthorityValidation({ authorization_expires_at: authorizationExpiresAt });
+      const onRedeemBearerToken = vi.fn(async (params) => ({
+        bearer_token: `tok_${params.userEmail}`,
+        scope: params.scope,
+        expires_in: 3600,
+      }));
+      const cappedHandler = createServiceHandler({
+        ...baseConfig,
+        signingKey,
+        onRedeemBearerToken,
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'bearer_token', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await cappedHandler(req);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as { expires_in: number };
+      expect(body.expires_in).toBe(90);
+      expect(onRedeemBearerToken).toHaveBeenCalledWith(expect.objectContaining({
+        authorizationExpiresAt,
+      }));
+    });
+
+    it('rejects bearer-token redemption when delegation is already expired', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-18T15:00:00.000Z'));
+
+      const signingKey = await generateEcPrivateJwk();
+      mockAuthorityValidation({ authorization_expires_at: '2026-03-18T14:59:59.000Z' });
+      const onRedeemBearerToken = vi.fn(baseConfig.onRedeemBearerToken);
+      const expiredHandler = createServiceHandler({
+        ...baseConfig,
+        signingKey,
+        onRedeemBearerToken,
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'bearer_token', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await expiredHandler(req);
+      expect(res.status).toBe(422);
+      expect(onRedeemBearerToken).not.toHaveBeenCalled();
+    });
+
+    it('normalizes negative expires_in values to zero', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-18T15:00:00.000Z'));
+
+      const signingKey = await generateEcPrivateJwk();
+      mockAuthorityValidation({ authorization_expires_at: '2026-03-18T15:05:00.000Z' });
+      const zeroFloorHandler = createServiceHandler({
+        ...baseConfig,
+        signingKey,
+        onRedeemBearerToken: async () => ({
+          bearer_token: 'tok_negative',
+          scope: ['read'],
+          expires_in: -1,
+        }),
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-bearer-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'bearer_token', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await zeroFloorHandler(req);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as { expires_in: number };
+      expect(body.expires_in).toBe(0);
+    });
   });
 
   describe('POST /agentpass-service/agentpass/redeem-browser-session', () => {
@@ -483,6 +585,46 @@ describe('Service Handler', () => {
       const res = await handler(req);
       expect(res.status).toBe(400);
     });
+
+    it('passes authorization expiry to the browser-session handler and caps expires_at', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-18T15:00:00.000Z'));
+
+      const authorizationExpiresAt = '2026-03-18T15:02:00.000Z';
+      const signingKey = await generateEcPrivateJwk();
+      mockAuthorityValidation({
+        type: 'browser_session',
+        authorization_expires_at: authorizationExpiresAt,
+      });
+      const onRedeemBrowserSession = vi.fn(async (params) => ({
+        initialization_url: `https://service.example.com/init?user=${encodeURIComponent(params.userEmail)}`,
+        expires_at: '2026-03-18T15:10:00.000Z',
+      }));
+      const cappedHandler = createServiceHandler({
+        ...baseConfig,
+        signingKey,
+        onRedeemBrowserSession,
+      });
+
+      const req = new Request('https://service.example.com/agentpass-service/agentpass/redeem-browser-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentpass: { type: 'browser_session', value: 'ap_test' },
+          authority: 'https://authority.example.com',
+          user: { email: 'alex@example.com' },
+        }),
+      });
+
+      const res = await cappedHandler(req);
+      expect(res.status).toBe(200);
+
+      const body = await res.json() as { expires_at: string };
+      expect(body.expires_at).toBe(authorizationExpiresAt);
+      expect(onRedeemBrowserSession).toHaveBeenCalledWith(expect.objectContaining({
+        authorizationExpiresAt,
+      }));
+    });
   });
 
   describe('404 for unknown routes', () => {
@@ -493,3 +635,63 @@ describe('Service Handler', () => {
     });
   });
 });
+
+function mockAuthorityValidation(overrides: Partial<AuthorityValidationResponse> = {}) {
+  const validationResponse: AuthorityValidationResponse = {
+    authorization_id: 'authz_test',
+    authorization_expires_at: '2026-03-18T15:05:00.000Z',
+    user: { email: 'alex@example.com' },
+    agent: { id: 'test-harness' },
+    scope: ['read'],
+    type: 'bearer_token',
+    ...overrides,
+  };
+
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+
+    if (url === 'https://authority.example.com/ap') {
+      return new Response(JSON.stringify({
+        authority: 'https://authority.example.com',
+        trust_mode: 'federated',
+        jwks_uri: 'https://authority.example.com/jwks.json',
+        endpoints: {
+          issuance: 'https://authority.example.com/issue',
+          issuance_status: 'https://authority.example.com/requests/{id}',
+          validate: 'https://authority.example.com/validate',
+          authorization_check: 'https://authority.example.com/authorization-check',
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (url === 'https://authority.example.com/validate') {
+      expect(init?.method).toBe('POST');
+      return new Response(JSON.stringify(validationResponse), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    throw new Error(`Unexpected fetch to ${url}`);
+  });
+
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+async function generateEcPrivateJwk(): Promise<JsonWebKey> {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify'],
+  );
+
+  return crypto.subtle.exportKey('jwk', keyPair.privateKey);
+}

@@ -67,6 +67,7 @@ export class MemoryStorage implements AuthorityStorage {
 
     // Check expiry
     if (new Date(record.expiresAt) < new Date()) return null;
+    if (new Date(getAuthorizationExpiry(record)) < new Date()) return null;
 
     // Atomically consume
     this.consumedPasses.add(value);
@@ -77,7 +78,12 @@ export class MemoryStorage implements AuthorityStorage {
     const id = this.authorizationIndex.get(authorizationId);
     if (!id) return null;
     const record = this.records.get(id);
-    return record ? structuredClone(record) : null;
+    if (!record) return null;
+    if (new Date(getAuthorizationExpiry(record)) < new Date()) {
+      this.authorizationIndex.delete(authorizationId);
+      return null;
+    }
+    return structuredClone(record);
   }
 
   async revokeAuthorization(authorizationId: string): Promise<boolean> {
@@ -98,7 +104,7 @@ export class KVStorage implements AuthorityStorage {
   constructor(private kv: KVNamespace) {}
 
   async createIssuanceRecord(record: IssuanceRecord): Promise<void> {
-    const ttl = Math.max(60, Math.floor((new Date(record.expiresAt).getTime() - Date.now()) / 1000));
+    const ttl = computeStorageTtlSeconds(record);
     await Promise.all([
       this.kv.put(`record:${record.id}`, JSON.stringify(record), { expirationTtl: ttl }),
       record.agentpass
@@ -120,7 +126,7 @@ export class KVStorage implements AuthorityStorage {
     if (!existing) throw new Error(`Record not found: ${id}`);
 
     const updated = { ...existing, ...updates };
-    const ttl = Math.max(60, Math.floor((new Date(updated.expiresAt).getTime() - Date.now()) / 1000));
+    const ttl = computeStorageTtlSeconds(updated);
 
     await this.kv.put(`record:${id}`, JSON.stringify(updated), { expirationTtl: ttl });
 
@@ -160,6 +166,7 @@ export class KVStorage implements AuthorityStorage {
     const record = await this.getIssuanceRecord(id);
     if (!record || record.status !== 'approved') return null;
     if (new Date(record.expiresAt) < new Date()) return null;
+    if (new Date(getAuthorizationExpiry(record)) < new Date()) return null;
 
     await this.kv.put(`consumed:${value}`, '1', { expirationTtl: 3600 });
     return record;
@@ -168,7 +175,13 @@ export class KVStorage implements AuthorityStorage {
   async getAuthorizationRecord(authorizationId: string): Promise<IssuanceRecord | null> {
     const id = await this.kv.get(`authz:${authorizationId}`);
     if (!id) return null;
-    return this.getIssuanceRecord(id);
+    const record = await this.getIssuanceRecord(id);
+    if (!record) return null;
+    if (new Date(getAuthorizationExpiry(record)) < new Date()) {
+      await this.kv.delete(`authz:${authorizationId}`);
+      return null;
+    }
+    return record;
   }
 
   async revokeAuthorization(authorizationId: string): Promise<boolean> {
@@ -184,3 +197,14 @@ export class KVStorage implements AuthorityStorage {
   }
 }
 
+function getAuthorizationExpiry(record: IssuanceRecord): string {
+  return record.authorizationExpiresAt || record.expiresAt;
+}
+
+function computeStorageTtlSeconds(record: IssuanceRecord): number {
+  const latestExpiry = Math.max(
+    new Date(record.expiresAt).getTime(),
+    new Date(getAuthorizationExpiry(record)).getTime(),
+  );
+  return Math.max(60, Math.floor((latestExpiry - Date.now()) / 1000));
+}

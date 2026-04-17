@@ -89,10 +89,24 @@ describe('MemoryStorage', () => {
     expect(result).toBeNull();
   });
 
+  it('rejects consuming an AgentPass when the delegation has already expired', async () => {
+    const record = makeRecord({
+      status: 'approved',
+      agentpass: { type: 'bearer_token', value: 'ap_auth_expired' },
+      expiresAt: new Date(Date.now() + 300000).toISOString(),
+      authorizationExpiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    await storage.createIssuanceRecord(record);
+
+    const result = await storage.consumeAgentPass('ap_auth_expired');
+    expect(result).toBeNull();
+  });
+
   it('manages authorization records', async () => {
     const record = makeRecord({
       status: 'approved',
       authorizationId: 'authz_001',
+      authorizationExpiresAt: new Date(Date.now() + 300000).toISOString(),
     });
     await storage.createIssuanceRecord(record);
 
@@ -101,10 +115,27 @@ describe('MemoryStorage', () => {
     expect(authz!.authorizationId).toBe('authz_001');
   });
 
+  it('rejects expired authorization records even when the issuance record still exists', async () => {
+    const record = makeRecord({
+      status: 'approved',
+      authorizationId: 'authz_001',
+      authorizationExpiresAt: new Date(Date.now() - 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 300000).toISOString(),
+    });
+    await storage.createIssuanceRecord(record);
+
+    const authz = await storage.getAuthorizationRecord('authz_001');
+    expect(authz).toBeNull();
+
+    const issuanceRecord = await storage.getIssuanceRecord('req_001');
+    expect(issuanceRecord).toBeDefined();
+  });
+
   it('revokes authorizations', async () => {
     const record = makeRecord({
       status: 'approved',
       authorizationId: 'authz_001',
+      authorizationExpiresAt: new Date(Date.now() + 300000).toISOString(),
     });
     await storage.createIssuanceRecord(record);
 

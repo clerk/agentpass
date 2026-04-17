@@ -68,6 +68,7 @@ export type BrowserSessionRedemptionHandler = (params: {
   taskId?: string;
   taskDescription?: string;
   authorizationId: string;
+  authorizationExpiresAt: string;
 }) => Promise<{
   initialization_url: string;
   expires_at?: string;
@@ -82,6 +83,7 @@ export type BearerTokenRedemptionHandler = (params: {
   taskId?: string;
   taskDescription?: string;
   authorizationId: string;
+  authorizationExpiresAt: string;
 }) => Promise<{
   bearer_token: string;
   scope?: string[];
@@ -107,6 +109,7 @@ export type DnsResolver = (name: string, type: string) => Promise<string[]>;
 
 export interface AuthorityValidationResponse {
   authorization_id: string;
+  authorization_expires_at: string;
   user: { email: string };
   agent: { id: string };
   scope: string[];
