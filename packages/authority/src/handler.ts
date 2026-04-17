@@ -337,17 +337,23 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       return errorResponse(400, 'missing_field', 'agentpass.value is required');
     }
 
-    // Atomically consume the AgentPass
-    const record = await storage.consumeAgentPass(body.agentpass.value);
+    const candidateRecord = await storage.getAgentPassRecord(body.agentpass.value);
 
-    if (!record) {
+    if (!candidateRecord) {
       // Could be unknown, already consumed, or expired
       return errorResponse(409, 'consumed', 'AgentPass already consumed, expired, or unknown');
     }
 
     // Verify the requesting Service matches the intended audience
-    if (record.request.service.origin !== serviceOrigin) {
+    if (candidateRecord.request.service.origin !== serviceOrigin) {
       return errorResponse(403, 'wrong_audience', 'Service not authorized for this AgentPass');
+    }
+
+    // Atomically consume the AgentPass once audience is confirmed
+    const record = await storage.consumeAgentPass(body.agentpass.value, serviceOrigin);
+
+    if (!record) {
+      return errorResponse(409, 'consumed', 'AgentPass already consumed, expired, or unknown');
     }
 
     const response: ValidationResponse = {

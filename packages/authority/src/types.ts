@@ -159,7 +159,8 @@ export interface AuthorityStorage {
   getIssuanceRecord(id: string): Promise<IssuanceRecord | null>;
   updateIssuanceRecord(id: string, updates: Partial<IssuanceRecord>): Promise<void>;
   listIssuanceRecords(options?: { status?: string; limit?: number; offset?: number }): Promise<IssuanceRecord[]>;
-  consumeAgentPass(value: string): Promise<IssuanceRecord | null>;
+  getAgentPassRecord(value: string): Promise<IssuanceRecord | null>;
+  consumeAgentPass(value: string, expectedServiceOrigin?: string): Promise<IssuanceRecord | null>;
   getAuthorizationRecord(authorizationId: string): Promise<IssuanceRecord | null>;
   revokeAuthorization(authorizationId: string): Promise<boolean>;
 }

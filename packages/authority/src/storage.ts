@@ -55,22 +55,31 @@ export class MemoryStorage implements AuthorityStorage {
     return records.slice(offset, offset + limit).map(r => structuredClone(r));
   }
 
-  async consumeAgentPass(value: string): Promise<IssuanceRecord | null> {
-    if (this.consumedPasses.has(value)) return null;
-
+  async getAgentPassRecord(value: string): Promise<IssuanceRecord | null> {
     const id = this.agentPassIndex.get(value);
     if (!id) return null;
 
     const record = this.records.get(id);
     if (!record) return null;
     if (record.status !== 'approved') return null;
+    if (this.consumedPasses.has(value)) return null;
 
     // Check expiry
     if (new Date(record.expiresAt) < new Date()) return null;
 
+    return structuredClone(record);
+  }
+
+  async consumeAgentPass(value: string, expectedServiceOrigin?: string): Promise<IssuanceRecord | null> {
+    if (this.consumedPasses.has(value)) return null;
+
+    const record = await this.getAgentPassRecord(value);
+    if (!record) return null;
+    if (expectedServiceOrigin && record.request.service.origin !== expectedServiceOrigin) return null;
+
     // Atomically consume
     this.consumedPasses.add(value);
-    return structuredClone(record);
+    return record;
   }
 
   async getAuthorizationRecord(authorizationId: string): Promise<IssuanceRecord | null> {
@@ -150,16 +159,26 @@ export class KVStorage implements AuthorityStorage {
     return records.slice(offset, offset + limit);
   }
 
-  async consumeAgentPass(value: string): Promise<IssuanceRecord | null> {
-    const consumed = await this.kv.get(`consumed:${value}`);
-    if (consumed) return null;
-
+  async getAgentPassRecord(value: string): Promise<IssuanceRecord | null> {
     const id = await this.kv.get(`ap:${value}`);
     if (!id) return null;
 
     const record = await this.getIssuanceRecord(id);
     if (!record || record.status !== 'approved') return null;
+    const consumed = await this.kv.get(`consumed:${value}`);
+    if (consumed) return null;
     if (new Date(record.expiresAt) < new Date()) return null;
+
+    return record;
+  }
+
+  async consumeAgentPass(value: string, expectedServiceOrigin?: string): Promise<IssuanceRecord | null> {
+    const consumed = await this.kv.get(`consumed:${value}`);
+    if (consumed) return null;
+
+    const record = await this.getAgentPassRecord(value);
+    if (!record) return null;
+    if (expectedServiceOrigin && record.request.service.origin !== expectedServiceOrigin) return null;
 
     await this.kv.put(`consumed:${value}`, '1', { expirationTtl: 3600 });
     return record;
@@ -183,4 +202,3 @@ export class KVStorage implements AuthorityStorage {
     return true;
   }
 }
-
