@@ -186,38 +186,13 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
       if (!body.harness.cnf?.jwk) {
         return errorResponse(400, 'attestation_error', 'Harness attestation requires holder binding (harness.cnf)');
       }
-      try {
-        const attestPayload = decodeJwtPayload(body.harness.attestation.jwt);
-        const issuer = attestPayload.iss as string;
-        // Fetch the attestation signer's JWKS
-        const jwksUrl = `${issuer}/.well-known/jwks.json`;
-        const keys = await fetchJwks(jwksUrl);
-        // Try to verify with each key
-        let verified = false;
-        for (const key of keys) {
-          try {
-            const pubKey = await importVerifyKey(key);
-            const { payload } = await verifyJwt(body.harness.attestation.jwt, pubKey);
-            // Verify cnf.jwk matches
-            const attestCnf = payload.cnf as { jwk: JsonWebKey } | undefined;
-            if (!attestCnf?.jwk) {
-              return errorResponse(400, 'attestation_error', 'Harness attestation missing cnf.jwk');
-            }
-            // Check key match (compare x and y for EC keys)
-            if (JSON.stringify(attestCnf.jwk) !== JSON.stringify(body.harness.cnf.jwk)) {
-              return errorResponse(400, 'attestation_error', 'Harness attestation cnf.jwk does not match harness.cnf.jwk');
-            }
-            verified = true;
-            break;
-          } catch {
-            continue;
-          }
-        }
-        if (!verified) {
-          return errorResponse(401, 'attestation_error', 'Harness attestation signature verification failed');
-        }
-      } catch (e) {
-        return errorResponse(401, 'attestation_error', `Harness attestation verification failed: ${(e as Error).message}`);
+      const attestationError = await verifyHarnessAttestation(
+        body.harness.attestation.jwt,
+        body.harness.id,
+        body.harness.cnf.jwk,
+      );
+      if (attestationError) {
+        return attestationError;
       }
     }
 
@@ -590,6 +565,93 @@ export function createAuthorityHandler(config: AuthorityConfig, storage: Authori
     // For now we just check the token is present; actual verification
     // happens via the implementer's middleware or the React provider's getToken
     return null;
+  }
+
+  async function verifyHarnessAttestation(
+    attestationJwt: string,
+    harnessId: string,
+    harnessCnfJwk: JsonWebKey,
+  ): Promise<Response | null> {
+    try {
+      const attestPayload = decodeJwtPayload(attestationJwt);
+      const issuer = attestPayload.iss;
+      if (typeof issuer !== 'string' || !issuer) {
+        return errorResponse(400, 'attestation_error', 'Harness attestation iss is required');
+      }
+
+      const trustedIssuer = config.trustedHarnessAttestationIssuers?.find(entry => entry.issuer === issuer);
+      if (!trustedIssuer) {
+        return errorResponse(401, 'attestation_error', 'Harness attestation issuer is not trusted');
+      }
+
+      const keys = await fetchJwks(resolveUrl(trustedIssuer.jwksUri));
+      for (const key of keys) {
+        try {
+          const pubKey = await importVerifyKey(key);
+          const { payload } = await verifyJwt(attestationJwt, pubKey);
+
+          if (payload.sub !== harnessId) {
+            return errorResponse(400, 'attestation_error', 'Harness attestation sub must match harness.id');
+          }
+
+          const attestCnf = payload.cnf as { jwk: JsonWebKey } | undefined;
+          if (!attestCnf?.jwk) {
+            return errorResponse(400, 'attestation_error', 'Harness attestation missing cnf.jwk');
+          }
+          if (!jwkPublicKeyEquals(attestCnf.jwk, harnessCnfJwk)) {
+            return errorResponse(400, 'attestation_error', 'Harness attestation cnf.jwk does not match harness.cnf.jwk');
+          }
+          if (typeof payload.exp !== 'number') {
+            return errorResponse(400, 'attestation_error', 'Harness attestation exp is required');
+          }
+          if (payload.exp < Math.floor(Date.now() / 1000)) {
+            return errorResponse(401, 'attestation_error', 'Harness attestation has expired');
+          }
+
+          return null;
+        } catch {
+          continue;
+        }
+      }
+
+      return errorResponse(401, 'attestation_error', 'Harness attestation signature verification failed');
+    } catch (e) {
+      return errorResponse(401, 'attestation_error', `Harness attestation verification failed: ${(e as Error).message}`);
+    }
+  }
+}
+
+function jwkPublicKeyEquals(a: JsonWebKey, b: JsonWebKey): boolean {
+  const normalizedA = normalizeComparableJwk(a);
+  const normalizedB = normalizeComparableJwk(b);
+  return JSON.stringify(normalizedA) === JSON.stringify(normalizedB);
+}
+
+function normalizeComparableJwk(jwk: JsonWebKey): Record<string, string | undefined> {
+  switch (jwk.kty) {
+    case 'EC':
+      return {
+        kty: jwk.kty,
+        crv: jwk.crv,
+        x: jwk.x,
+        y: jwk.y,
+      };
+    case 'RSA':
+      return {
+        kty: jwk.kty,
+        e: jwk.e,
+        n: jwk.n,
+      };
+    case 'OKP':
+      return {
+        kty: jwk.kty,
+        crv: jwk.crv,
+        x: jwk.x,
+      };
+    default:
+      return {
+        kty: jwk.kty,
+      };
   }
 }
 

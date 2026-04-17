@@ -141,7 +141,7 @@ The attestation is carried in the `harness.attestation` field of the issuance re
 The attestation JWT MUST include:
 
 - `iss` (string): the attestation signer (for example, `https://anthropic.com`). This is a trusted third party — NOT the Harness itself.
-- `sub` (string): the verified agent identity (for example, `claude-code`).
+- `sub` (string): the verified agent identity. When the issuance request includes `harness.id`, the `sub` value MUST match that `harness.id`.
 - `cnf` (object): MUST contain a `jwk` field. The `cnf.jwk` value MUST match the `harness.cnf.jwk` value in the issuance request. This binds the verified identity to the holder binding key.
 - `iat` (number): issuance time.
 - `exp` (number): expiration time. Attestation JWTs SHOULD be short-lived.
@@ -153,10 +153,12 @@ The attestation JWT MUST be signed by the trusted third party (the `iss`), NOT b
 When `harness.attestation` is present in an issuance request, the Authority MUST:
 
 1. Decode the attestation JWT and extract the `iss` claim.
-2. Fetch the attestation signer's JWKS from a JWKS endpoint for that issuer.
-3. Verify the attestation JWT signature against the signer's published keys.
-4. Verify that the attestation `cnf.jwk` matches `harness.cnf.jwk` in the issuance request.
-5. Verify that the attestation is not expired.
+2. Determine whether the `iss` is trusted under Authority local policy. The Authority MUST NOT derive network locations from an unknown or untrusted `iss` value.
+3. Obtain the attestation signer's verification keys from a preconfigured trust anchor for that issuer, such as a pinned `jwks_uri` or pinned issuer metadata.
+4. Verify the attestation JWT signature against the signer's published keys.
+5. Verify that the attestation `sub` matches `harness.id` in the issuance request.
+6. Verify that the attestation `cnf.jwk` matches `harness.cnf.jwk` in the issuance request.
+7. Verify that the attestation is not expired.
 
 If any verification step fails, the Authority MUST reject the issuance request.
 
@@ -199,7 +201,7 @@ Harnesses present varying levels of identity assurance depending on whether they
 
 | Tier | Mechanism | Use case | `harness.id` assurance |
 |------|-----------|----------|---------------------|
-| Attested | `harness.attestation.jwt` signed by vendor. Authority verifies vendor JWKS. | Cloud harnesses (Claude Code, Codex) | High — cryptographically verified |
+| Attested | `harness.attestation.jwt` signed by vendor. Authority verifies vendor signature using a preconfigured trust anchor for that issuer. | Cloud harnesses (Claude Code, Codex) | High — cryptographically verified |
 | Registered | No attestation JWT. `cnf.jwk` pre-registered with Authority out-of-band. Authority recognizes key. | Self-hosted harnesses in enterprise environments | Medium — identity from registration |
 | Unverified | No attestation, no registration. `harness.id` is self-asserted in request body. Holder binding still works. | Personal use, non-enterprise | Low — self-asserted |
 
