@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@agentpass/service": "file:../../packages/service",
-    "@clerk/react": "^6.1.0",
+    "@clerk/react": "^6.6.2",
     "hono": "^4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
